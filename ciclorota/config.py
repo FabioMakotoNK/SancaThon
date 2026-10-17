@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+
 _WEEKDAYS = {
     "MONDAY": 0,
     "TUESDAY": 1,
@@ -33,6 +34,16 @@ def weekday_names(days: tuple[int, ...]) -> list[str]:
     return [inverse[day] for day in days]
 
 
+def google_api_key_status(value: str) -> str:
+    """Recognize example values without claiming to validate a Google key."""
+    key = value.strip()
+    if not key:
+        return "missing"
+    if key.lower().startswith("your-") or key.upper() == "YOUR_API_KEY" or key == "AIza...":
+        return "placeholder"
+    return "provided"
+
+
 @dataclass(frozen=True)
 class Settings:
     database_path: Path = Path("data/ciclorota.sqlite3")
@@ -49,6 +60,10 @@ class Settings:
     fuel_cost_per_liter_brl: float = 6.20
     co2_kg_per_liter: float = 2.68
     max_exact_route_stops: int = 12
+    google_maps_browser_key: str = ""
+    google_geocoding_api_key: str = ""
+    google_maps_map_id: str = "DEMO_MAP_ID"
+    geocoder_timeout_seconds: float = 5.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -68,6 +83,10 @@ class Settings:
             fuel_cost_per_liter_brl=float(os.getenv("CICLOROTA_FUEL_COST_BRL_PER_L", "6.20")),
             co2_kg_per_liter=float(os.getenv("CICLOROTA_CO2_KG_PER_L", "2.68")),
             max_exact_route_stops=int(os.getenv("CICLOROTA_MAX_EXACT_STOPS", "12")),
+            google_maps_browser_key=os.getenv("CICLOROTA_GOOGLE_MAPS_BROWSER_KEY", "").strip(),
+            google_geocoding_api_key=os.getenv("CICLOROTA_GOOGLE_GEOCODING_API_KEY", "").strip(),
+            google_maps_map_id=os.getenv("CICLOROTA_GOOGLE_MAP_ID", "DEMO_MAP_ID").strip(),
+            geocoder_timeout_seconds=float(os.getenv("CICLOROTA_GEOCODER_TIMEOUT", "5")),
         )
         if settings.stale_after_seconds <= 0 or settings.offline_after_seconds < settings.stale_after_seconds:
             raise ValueError("Offline age must be greater than or equal to a positive stale age")
@@ -79,4 +98,8 @@ class Settings:
             raise ValueError(f"Unknown timezone: {settings.timezone_name}") from error
         if settings.average_speed_kmh <= 0 or settings.fallback_road_factor < 1:
             raise ValueError("Routing speed must be positive and road factor must be at least one")
+        if settings.geocoder_timeout_seconds <= 0:
+            raise ValueError("Geocoder timeout must be positive")
+        if not settings.google_maps_map_id:
+            raise ValueError("Google Maps map ID cannot be empty")
         return settings

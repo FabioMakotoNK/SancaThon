@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import Settings, weekday_names
+from .config import Settings, google_api_key_status, weekday_names
 from .db import Database
+from .geocoding import AddressNotFound, GeocodingError, GoogleMapsGeocoder
 from .routing import Coordinate
 from .schemas import DumpsterCreate, MeasurementCreate, RoutePlanRequest
 from .service import build_route_plan, iso_utc, local_today, next_collection_date, present_dumpster, utc_now
@@ -20,13 +21,21 @@ from .service import build_route_plan, iso_utc, local_today, next_collection_dat
 logger = logging.getLogger("ciclorota")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    geocoder: GoogleMapsGeocoder | None = None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     database = Database(settings.database_path)
     database.initialize()
     app = FastAPI(title="CicloRota API", version="0.1.0")
     app.state.settings = settings
     app.state.database = database
+    app.state.geocoder = geocoder or GoogleMapsGeocoder(
+        database,
+        api_key=settings.google_geocoding_api_key,
+        timeout_seconds=settings.geocoder_timeout_seconds,
+    )
     dashboard_dir = Path(__file__).parent / "dashboard"
 
     @app.get("/api/health")
@@ -35,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/config")
     def get_config() -> dict[str, Any]:
+        browser_key_status = google_api_key_status(settings.google_maps_browser_key)
         return {
             "fixed_collection_weekdays": weekday_names(settings.fixed_collection_weekdays),
             "default_fill_threshold_percent": settings.default_fill_threshold_percent,
@@ -42,6 +52,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "stale_after_seconds": settings.stale_after_seconds,
             "offline_after_seconds": settings.offline_after_seconds,
             "osrm_configured": bool(settings.osrm_base_url),
+            "google_maps_browser_key": (
+                settings.google_maps_browser_key if browser_key_status == "provided" else ""
+            ),
+            "google_maps_key_status": browser_key_status,
+            "google_maps_map_id": settings.google_maps_map_id,
         }
 
     @app.post("/api/dumpsters", status_code=201)
@@ -49,6 +64,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         item = payload.model_dump()
         if database.get_dumpster(item["id"]):
             raise HTTPException(status_code=409, detail="Dumpster ID already exists")
+        if item["address"]:
+            try:
+                location = app.state.geocoder.geocode(item["address"])
+            except AddressNotFound as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            except GeocodingError as error:
+                logger.warning("Could not geocode dumpster %s: %s", item["id"], error)
+                raise HTTPException(status_code=502, detail=str(error)) from error
+            item["latitude"] = location.latitude
+            item["longitude"] = location.longitude
+            item["geocoded_label"] = location.display_name
+        else:
+            item["geocoded_label"] = None
         if item["fill_threshold_percent"] is None:
             item["fill_threshold_percent"] = settings.default_fill_threshold_percent
         try:
@@ -56,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             logger.exception("Could not create dumpster %s", item["id"])
             raise HTTPException(status_code=409, detail="Could not create dumpster")
+        logger.info("Registered dumpster %s at %.6f, %.6f", item["id"], item["latitude"], item["longitude"])
         return {"status": "created", "dumpster": item}
 
     @app.get("/api/dumpsters")
@@ -135,15 +164,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Route planning failed: {error}") from error
 
     @app.get("/api/routes/latest")
-    def latest_route() -> dict[str, Any]:
-        result = database.latest_route_plan()
-        if result is None:
-            raise HTTPException(status_code=404, detail="No route has been planned")
-        return result
+    def latest_route() -> dict[str, Any] | None:
+        return database.latest_route_plan()
 
     @app.get("/")
     def dashboard() -> FileResponse:
         return FileResponse(dashboard_dir / "index.html")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> RedirectResponse:
+        return RedirectResponse(url="/dashboard/favicon.svg", status_code=307)
 
     app.mount("/dashboard", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")
     return app

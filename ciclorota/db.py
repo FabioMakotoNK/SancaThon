@@ -29,7 +29,9 @@ class Database:
                     fill_threshold_percent REAL NOT NULL,
                     daily_fill_rate_percent REAL NOT NULL DEFAULT 0,
                     baseline_order INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    address TEXT,
+                    geocoded_label TEXT
                 );
                 CREATE TABLE IF NOT EXISTS measurements (
                     measurement_id TEXT PRIMARY KEY,
@@ -49,8 +51,20 @@ class Database:
                     planned_at TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS geocoding_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    latitude REAL NOT NULL,
+                    longitude REAL NOT NULL,
+                    display_name TEXT NOT NULL,
+                    cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(dumpsters)").fetchall()}
+            if "address" not in columns:
+                conn.execute("ALTER TABLE dumpsters ADD COLUMN address TEXT")
+            if "geocoded_label" not in columns:
+                conn.execute("ALTER TABLE dumpsters ADD COLUMN geocoded_label TEXT")
             conn.commit()
 
     @contextmanager
@@ -72,13 +86,13 @@ class Database:
             conn.execute(
                 """INSERT INTO dumpsters
                    (id, name, latitude, longitude, empty_distance_cm, full_distance_cm,
-                    fill_threshold_percent, daily_fill_rate_percent, baseline_order, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    fill_threshold_percent, daily_fill_rate_percent, baseline_order, created_at, address, geocoded_label)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     item["id"], item["name"], item["latitude"], item["longitude"],
                     item["empty_distance_cm"], item["full_distance_cm"],
                     item["fill_threshold_percent"], item["daily_fill_rate_percent"],
-                    item["baseline_order"], created_at,
+                    item["baseline_order"], created_at, item.get("address"), item.get("geocoded_label"),
                 ),
             )
 
@@ -111,6 +125,23 @@ class Database:
                 """
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def get_geocoding_cache(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT latitude, longitude, display_name FROM geocoding_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def store_geocoding_cache(self, cache_key: str, latitude: float, longitude: float, display_name: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO geocoding_cache
+                   (cache_key, latitude, longitude, display_name, cached_at)
+                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (cache_key, latitude, longitude, display_name),
+            )
 
     def insert_measurement(self, item: dict[str, Any]) -> bool:
         with self.connection() as conn:

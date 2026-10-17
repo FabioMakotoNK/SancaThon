@@ -18,4 +18,12 @@ The repository started with project guidance only. This plan records the impleme
 - One ESP32-side distance Kalman filter; the server recomputes the calibrated fill estimate from the reported filtered distance and stores both the estimate and raw distance.
 - Collection days default to Monday and Thursday and are configurable. Planning accepts only those weekdays and never changes a dispatch date.
 - OSRM is optional. When unavailable, the backend uses a documented, approximate haversine road-distance model so local demonstrations remain self-contained.
-- A deterministic local TSP solver provides routing without an optimization service or dependency. Fuel, emissions, and cost are estimates controlled by configuration.
+- A deterministic local TSP solver provides routing without an optimization service or dependency. Google Maps Platform supplies the dashboard map and address geocoding; optional OSRM supplies road-network distances. Fuel, emissions, and cost are estimates controlled by configuration.
+
+9. [x] Replace dashboard coordinate fields with street-address entry and geocode each user-submitted address server-side.
+10. [x] Store entered and matched addresses with resolved coordinates; cache successful geocodes and migrate existing SQLite databases.
+11. [x] Replace the schematic dashboard plot with an interactive Google Map of all dumpster locations, fill/health markers, route overlay, and 15-second data refresh.
+12. [x] Add tests for address registration, Google Geocoding API success/cache/failure, database migration, and map dashboard assets.
+13. [x] Replace the previous geocoding and map providers with Google Maps Platform; keep browser and server API keys separate; use Advanced Markers and a configurable map ID; document key restrictions, billing, and deployment requirements.
+14. [x] Diagnose local Google Maps key errors, reject documented placeholder keys, return a normal empty latest-route response, add a favicon, and verify the running local API plus automated tests.
+15. [x] Localize the complete dashboard in Brazilian Portuguese, including dynamic status/route/error messages, number and date formatting, accessibility text, and Google Maps language/region settings.

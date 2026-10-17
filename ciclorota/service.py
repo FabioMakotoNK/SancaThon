@@ -67,6 +67,8 @@ def present_dumpster(row: dict[str, Any], settings: Settings, now: datetime) -> 
     return {
         "id": row["id"],
         "name": row["name"],
+        "address": row.get("address"),
+        "geocoded_label": row.get("geocoded_label"),
         "latitude": row["latitude"],
         "longitude": row["longitude"],
         "empty_distance_cm": row["empty_distance_cm"],

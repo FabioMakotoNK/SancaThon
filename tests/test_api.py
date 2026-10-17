@@ -3,18 +3,22 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from ciclorota.api import create_app
+from ciclorota.geocoding import GeocodedAddress
 from ciclorota.config import Settings
 from ciclorota.service import local_today, next_collection_date
 
 
-def make_client(path):
+def make_client(path, geocoder=None):
     settings = Settings(
         database_path=path, fixed_collection_weekdays=(0, 3),
         stale_after_seconds=3600, offline_after_seconds=86400,
         default_fill_threshold_percent=75, osrm_base_url="",
         average_speed_kmh=30, fallback_road_factor=1.25,
+        google_maps_browser_key="browser-restricted-key",
+        google_geocoding_api_key="server-only-secret",
+        google_maps_map_id="test-map-id",
     )
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings, geocoder=geocoder))
 
 
 def create_dumpster(client, id_, order=0, threshold=75, rate=0):
@@ -34,6 +38,48 @@ def post_fill(client, id_, measurement_id, fill, measured_at=None):
         "raw_distance_cm": distance + 0.3, "fill_percentage": fill,
         "measured_at": (measured_at or datetime.now(timezone.utc)).isoformat(),
     })
+
+
+def test_google_maps_settings_load_from_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("CICLOROTA_DB_PATH", str(tmp_path / "env.sqlite3"))
+    monkeypatch.setenv("CICLOROTA_GOOGLE_MAPS_BROWSER_KEY", "browser-key")
+    monkeypatch.setenv("CICLOROTA_GOOGLE_GEOCODING_API_KEY", "server-key")
+    monkeypatch.setenv("CICLOROTA_GOOGLE_MAP_ID", "production-map-id")
+    settings = Settings.from_env()
+    assert settings.google_maps_browser_key == "browser-key"
+    assert settings.google_geocoding_api_key == "server-key"
+    assert settings.google_maps_map_id == "production-map-id"
+
+
+def test_unplanned_route_and_favicon_are_available_without_404(tmp_path):
+    client = make_client(tmp_path / "empty.sqlite3")
+    latest = client.get("/api/routes/latest")
+    assert latest.status_code == 200
+    assert latest.json() is None
+    icon_redirect = client.get("/favicon.ico", follow_redirects=False)
+    assert icon_redirect.status_code == 307
+    assert icon_redirect.headers["location"] == "/dashboard/favicon.svg"
+    icon = client.get("/dashboard/favicon.svg")
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+
+
+def test_example_google_keys_are_not_sent_to_google(tmp_path):
+    settings = Settings(
+        database_path=tmp_path / "placeholders.sqlite3",
+        google_maps_browser_key="your-referrer-restricted-browser-key",
+        google_geocoding_api_key="your-server-only-geocoding-key",
+    )
+    client = TestClient(create_app(settings))
+    config = client.get("/api/config").json()
+    assert config["google_maps_browser_key"] == ""
+    assert config["google_maps_key_status"] == "placeholder"
+    response = client.post("/api/dumpsters", json={
+        "id": "D-EXAMPLE", "name": "Example", "address": "Rua Central 1, São Carlos",
+        "empty_distance_cm": 150, "full_distance_cm": 25,
+    })
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Google Geocoding API key is not configured"
 
 
 def test_health_and_register_validation(tmp_path):
@@ -124,5 +170,72 @@ def test_projection_prevents_overflow_before_fixed_run(tmp_path):
 def test_dashboard_and_static_assets_are_served(tmp_path):
     client = make_client(tmp_path / "api.sqlite3")
     assert client.get("/").status_code == 200
-    assert "CicloRota" in client.get("/").text
+    page = client.get("/").text
+    assert "CicloRota" in page
+    assert "name=\"address\"" in page
+    assert "Interactive map of dumpster locations" in page
+    assert "Google Maps attribution appears on the map" in page
+    assert "leaflet" not in page.lower()
+    app_js = client.get("/dashboard/app.js").text
+    assert "maps.googleapis.com/maps/api/js" in app_js
+    assert "AdvancedMarkerElement" in app_js
+    assert "gm_authFailure" in app_js
+    assert "CICLOROTA_GOOGLE_MAPS_BROWSER_KEY" in app_js
+    assert "tile.openstreetmap.org" not in app_js
+    config = client.get("/api/config").json()
+    assert config["google_maps_browser_key"] == "browser-restricted-key"
+    assert config["google_maps_key_status"] == "provided"
+    assert config["google_maps_map_id"] == "test-map-id"
+    assert "google_geocoding_api_key" not in config
+    assert "server-only-secret" not in str(config)
+    assert "server-only-secret" not in app_js
     assert client.get("/dashboard/app.js").status_code == 200
+
+
+class StubGeocoder:
+    def __init__(self):
+        self.addresses = []
+
+    def geocode(self, address):
+        self.addresses.append(address)
+        return GeocodedAddress(-22.0145, -47.8912, "Avenida Brasil, São Carlos, SP")
+
+
+def test_address_registration_geocodes_and_stores_location(tmp_path):
+    geocoder = StubGeocoder()
+    client = make_client(tmp_path / "address.sqlite3", geocoder)
+    response = client.post("/api/dumpsters", json={
+        "id": "D-ADDRESS", "name": "North yard",
+        "address": "Avenida Brasil, São Carlos, SP",
+        "empty_distance_cm": 150, "full_distance_cm": 25,
+    })
+    assert response.status_code == 201, response.text
+    result = response.json()["dumpster"]
+    assert result["latitude"] == -22.0145
+    assert result["longitude"] == -47.8912
+    assert result["geocoded_label"] == "Avenida Brasil, São Carlos, SP"
+    assert geocoder.addresses == ["Avenida Brasil, São Carlos, SP"]
+    stored = client.get("/api/dumpsters").json()[0]
+    assert stored["address"] == "Avenida Brasil, São Carlos, SP"
+    assert stored["latitude"] == -22.0145
+
+
+def test_address_registration_maps_not_found_and_provider_errors(tmp_path):
+    from ciclorota.geocoding import AddressNotFound, GeocodingError
+
+    class MissingGeocoder:
+        def geocode(self, address):
+            raise AddressNotFound("No map location matched that street address")
+
+    class FailedGeocoder:
+        def geocode(self, address):
+            raise GeocodingError("Address lookup service is unavailable")
+
+    payload = {"id": "D-X", "name": "X", "address": "Rua das Flores 1, São Carlos",
+               "empty_distance_cm": 150, "full_distance_cm": 25}
+    not_found = make_client(tmp_path / "missing.sqlite3", MissingGeocoder()).post("/api/dumpsters", json=payload)
+    failed = make_client(tmp_path / "failed.sqlite3", FailedGeocoder()).post("/api/dumpsters", json=payload)
+    assert not_found.status_code == 422
+    assert failed.status_code == 502
+    assert make_client(tmp_path / "missing.sqlite3", MissingGeocoder()).get("/api/dumpsters").json() == []
+    assert make_client(tmp_path / "failed.sqlite3", FailedGeocoder()).get("/api/dumpsters").json() == []

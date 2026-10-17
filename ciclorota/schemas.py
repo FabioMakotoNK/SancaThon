@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Annotated
 from uuid import uuid4
 
@@ -14,8 +14,9 @@ class DumpsterCreate(BaseModel):
 
     id: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")]
     name: Annotated[str, Field(min_length=1, max_length=120)]
-    latitude: Annotated[float, Field(ge=-90, le=90)]
-    longitude: Annotated[float, Field(ge=-180, le=180)]
+    address: Annotated[str | None, Field(min_length=5, max_length=300)] = None
+    latitude: Annotated[float | None, Field(ge=-90, le=90)] = None
+    longitude: Annotated[float | None, Field(ge=-180, le=180)] = None
     empty_distance_cm: Annotated[float, Field(gt=0, le=400)]
     full_distance_cm: Annotated[float, Field(gt=0, le=400)]
     fill_threshold_percent: Annotated[float | None, Field(ge=0, le=100)] = None
@@ -23,7 +24,13 @@ class DumpsterCreate(BaseModel):
     baseline_order: Annotated[int, Field(ge=0, le=100000)] = 0
 
     @model_validator(mode="after")
-    def calibration_is_ordered(self) -> "DumpsterCreate":
+    def location_and_calibration_are_valid(self) -> "DumpsterCreate":
+        has_both_coordinates = self.latitude is not None and self.longitude is not None
+        has_partial_coordinates = (self.latitude is None) != (self.longitude is None)
+        if self.address and (has_both_coordinates or has_partial_coordinates):
+            raise ValueError("Provide either a street address or coordinates, not both")
+        if not self.address and not has_both_coordinates:
+            raise ValueError("Provide a street address or both latitude and longitude")
         if self.empty_distance_cm <= self.full_distance_cm:
             raise ValueError("empty_distance_cm must be greater than full_distance_cm")
         return self

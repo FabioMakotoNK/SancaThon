@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="CicloRota">
+  <rect width="64" height="64" rx="15" fill="#166b4b"/>
+  <path d="M13 34c0-10 7-18 18-18 6 0 10 2 14 6l-5 5c-2-3-5-4-9-4-6 0-10 4-10 11s4 11 10 11c4 0 7-2 9-5l5 5c-4 5-9 7-15 7-10 0-17-8-17-18z" fill="#fff"/>
+  <path d="M35 30h10c5 0 8 3 8 8 0 3-2 6-5 7l6 8h-9l-5-7h-5v-6h9c2 0 3-1 3-2s-1-2-3-2h-9v-6z" fill="#d8f0df"/>
+</svg>

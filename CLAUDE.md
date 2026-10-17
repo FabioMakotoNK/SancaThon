@@ -12,7 +12,7 @@
 - João Pedro Peressin Beduschi
 - Fabio Makoto
 
-**Problem.** Industrial waste collection often uses fixed schedules and fixed routes, even when some dumpsters do not need emptying. This can cause unnecessary stops and travel, low truck utilization, wasted fuel, higher operating costs, and increased CO₂ emissions.
+**Problem.** Industrial waste collection often uses fixed schedules and fixed routes, even when some dumpsters do not need emptying. This can cause unnecessary stops and travel, low truck utilination, wasted fuel, higher operating costs, and increased CO₂ emissions.
 
 **Target users.** Industrial facilities that generate substantial waste (particularly food processing, metalworking, and manufacturing), logistics and sustainability managers, operations teams, and outsourced industrial waste-collection providers.
 
@@ -33,7 +33,7 @@ The team has described this intended end-to-end design:
 7. Calculate an efficient collection route using **mapping/routing algorithms** and the selected stops.
 8. Present the relevant information in a **monitoring dashboard**.
 
-**Not yet specified or verified:** server framework, database, HTTP endpoint paths, payload schema, map provider, optimization library, dashboard technology, upload frequency, sensor sampling frequency, threshold values, vehicle fleet configuration, container dimensions, deployment environment, and current implementation progress. Do not present suggestions below as decided facts.
+**MVP implementation choices recorded in this repository:** FastAPI, SQLite, documented REST schemas, Google Maps Platform for dashboard mapping and address geocoding, OSRM as an optional route-matrix service, and a static monitoring dashboard. See the README and section 13 for the current implementation. Site-specific calibration, operational thresholds, physical installation, and production deployment still require field validation.
 
 ## 3. Intended system architecture
 
@@ -138,7 +138,7 @@ Suggested additional metadata where useful: device ID, calibration/version, sens
 5. Optimize the sequence of stops; for multiple trucks, include depot locations, vehicle capacities, and other routing constraints where known.
 6. Publish selected stops, omitted stops, reasons/priority, and resulting route to the dashboard.
 
-Potential model: **Traveling Salesperson Problem (TSP)** for one truck with fixed eligible stops; **Vehicle Routing Problem (VRP)** for multiple vehicles, capacity constraints, or richer dispatch requirements. **Google OR-Tools** is a possible solver; **OpenStreetMap + OSRM** are possible road-network sources. These are **technology recommendations, not a chosen stack**.
+Potential model: **Traveling Salesperson Problem (TSP)** for one truck with fixed eligible stops; **Vehicle Routing Problem (VRP)** for multiple vehicles, capacity constraints, or richer dispatch requirements. This MVP uses a deterministic local TSP solver, Google Maps Platform for the dashboard map and address geocoding, and optional OSRM road-network matrices.
 
 **Optimization objective:** Reduce unnecessary road travel, time, and cost *subject to* acceptable service quality, overflow prevention, and vehicle constraints. Minimizing distance alone is insufficient if it causes missed urgent collections.
 
@@ -244,3 +244,24 @@ Still unverified:
 - HC-SR04 wiring, calibration against real containers, ESP32 Wi-Fi/HTTP behavior, and industrial field durability.
 - OSRM against an actual configured road-network service. Its failure fallback is covered by a mocked test.
 - Hardware buffering during long network outages; the current firmware retries a bounded number of times and resumes at its next measurement interval.
+
+
+## 13. Address registration and Google Maps Platform coverage map (2026-10-17)
+
+The dashboard registers dumpsters using physical street addresses. The FastAPI backend resolves each submitted address with the Google Geocoding API and stores the entered address, formatted result, and coordinates. Coordinate-only registration remains available to API clients and the simulator. Existing SQLite databases are migrated to add address fields and a persistent lookup cache.
+
+Google Maps Platform replaces the previous map and geocoding providers. Configure a referrer-restricted browser key for Maps JavaScript API, a separate secret backend key for Geocoding API, and a map ID. The backend exposes only the browser key through `GET /api/config`; it never returns the Geocoding API key. The map uses Google Maps JavaScript API and Advanced Markers, which require a map ID; `DEMO_MAP_ID` is a testing default. No key is committed to the repository. Missing credentials leave the API and dashboard data usable while the map displays setup guidance and address registration returns a provider error. Google's `gm_authFailure` callback also displays an actionable message when the browser key is rejected.
+
+The dashboard renders all registered dumpster positions, fill and device-health status pins, marker popups with address/readings/route decisions, and a planned route overlay. Its status data refreshes every 15 seconds. A user's submitted address is sent to Google for geocoding. The current MVP is single-tenant; Google's Geocoding policies, key restrictions, public Terms/Privacy requirements, and location-data retention rules must be reviewed before public or multi-tenant deployment.
+
+Verification for this provider migration: 29 Python tests passed, including Google Geocoding API response/status parsing, URL key usage, persistent-cache behavior, API key separation, address registration, database migration, and dashboard integration checks. JavaScript syntax and Python compilation passed. Live Google Maps display and geocoding were not tested because no Cloud project, keys, billing configuration, or deployed referrer restrictions are provided. The dashboard uses the documented demo map ID until a project-specific map ID is configured.
+
+## 14. Local Google Maps diagnostics and empty-route behavior (2026-10-17)
+
+The running local server was configured with the documented example browser key, which Google rejected with `InvalidKeyMapError`. The backend now classifies missing, placeholder, and provided browser keys. It withholds obvious example values from `GET /api/config`, and the dashboard displays an actionable setup message instead of loading Google Maps with those values. The server also treats an example Geocoding key as unconfigured. This local check does not validate real Google credentials; Google Cloud still must accept the supplied key, billing, API access, and referrer restrictions.
+
+Before any route has been planned, `GET /api/routes/latest` now returns HTTP 200 with JSON `null`; the dashboard treats it as the normal empty state. A dashboard favicon and `/favicon.ico` redirect remove the unrelated missing-icon request. After Uvicorn reloaded, the live local server returned HTTP 200 and `null` for the latest route, HTTP 307 for the icon redirect, and a `placeholder` key status with no browser key sent. The 29 Python tests, JavaScript syntax check, and Python compilation passed. Rendering a live Google map still requires valid Cloud credentials and was not verified here.
+
+## 15. Dashboard em português brasileiro (2026-10-17)
+
+Todo o texto visível do dashboard está em português brasileiro: estrutura HTML, estados e erros, decisões de coleta, datas e números localizados, acessibilidade e textos dos marcadores. A Maps JavaScript API é carregada com `language=pt-BR` e `region=BR`; mensagens recebidas da API são convertidas para mensagens em português antes de aparecer na interface.

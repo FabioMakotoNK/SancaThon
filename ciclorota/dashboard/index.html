@@ -1,60 +1,67 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CicloRota | EcoTech</title>
+  <link rel="icon" type="image/svg+xml" href="/dashboard/favicon.svg">
   <link rel="stylesheet" href="/dashboard/style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand-mark">CR</div>
-    <div><p class="eyebrow">ECOTECH · REVERSE LOGISTICS</p><h1>CicloRota</h1></div>
-    <div class="schedule-chip"><span class="live-dot"></span><span id="schedule">Loading fixed schedule…</span></div>
+    <div><p class="eyebrow">ECOTECH · LOGÍSTICA REVERSA</p><h1>CicloRota</h1></div>
+    <div class="schedule-chip"><span class="live-dot"></span><span id="schedule">Carregando agenda fixa…</span></div>
   </header>
   <main>
     <section class="intro">
-      <div><p class="eyebrow">COLLECTION OPERATIONS</p><h2>Monitor sites and plan the next fixed-day run.</h2>
-        <p class="muted">Fill estimates guide stop selection. Collection days stay fixed; only stops and route order change.</p></div>
-      <button id="plan-button" class="primary">Plan next scheduled run</button>
+      <div><p class="eyebrow">OPERAÇÃO DE COLETA</p><h2>Monitore os pontos e planeje a próxima coleta programada.</h2>
+        <p class="muted">As estimativas de enchimento orientam a seleção dos pontos. Os dias de coleta permanecem fixos; apenas os pontos e a ordem da rota mudam.</p></div>
+      <button id="plan-button" class="primary">Planejar próxima coleta</button>
     </section>
     <section id="notice" class="notice" aria-live="polite"></section>
     <section class="stats-grid" id="summary"></section>
     <section class="content-grid">
       <article class="panel map-panel">
-        <div class="panel-heading"><div><p class="eyebrow">UPCOMING FIXED RUN</p><h3 id="route-title">Route overview</h3></div><span id="route-provider" class="tag">No route yet</span></div>
-        <div id="route-map" class="route-map" role="img" aria-label="Schematic route plot"></div>
-        <p class="map-caption">Schematic site positions. Distance uses OSRM when configured; otherwise it is an approximate local road-distance estimate.</p>
+        <div class="panel-heading"><div><p class="eyebrow">MAPA AO VIVO · ATUALIZAÇÃO A CADA 15 SEGUNDOS</p><h3 id="route-title">Localização das caçambas</h3></div><span id="route-provider" class="tag">Todos os pontos cadastrados</span></div>
+        <div id="route-map" class="route-map" role="application" aria-label="Mapa interativo com a localização das caçambas"></div>
+        <div class="map-legend" aria-label="Legenda de status do mapa">
+          <span><i class="legend-dot low"></i>Normal: abaixo de 70%</span>
+          <span><i class="legend-dot medium"></i>Enchimento: 70–89%</span>
+          <span><i class="legend-dot high"></i>Enchimento: 90% ou mais</span>
+          <span><i class="legend-dot attention"></i>Atrasada, off-line ou sem leitura</span>
+        </div>
+        <p class="map-caption">Os marcadores mostram cada caçamba cadastrada. O nível de enchimento e a situação do dispositivo são atualizados a cada 15 segundos. Clique em um marcador para ver o endereço, a última leitura e a decisão de coleta. A atribuição do Google Maps aparece no mapa.</p>
         <div id="route-stops" class="route-stops"></div>
       </article>
       <article class="panel metrics-panel">
-        <div class="panel-heading"><div><p class="eyebrow">ESTIMATED IMPACT</p><h3>Optimized vs fixed baseline</h3></div></div>
+        <div class="panel-heading"><div><p class="eyebrow">IMPACTO ESTIMADO</p><h3>Rota otimizada e rota de referência</h3></div></div>
         <div id="metrics"></div>
-        <p class="disclaimer">Fuel, CO₂, duration, and cost are estimates based on configured factors, not measured results.</p>
+        <p class="disclaimer">Combustível, CO₂, duração e custo são estimativas calculadas com os fatores configurados, não resultados medidos.</p>
       </article>
     </section>
     <section class="panel sites-panel">
-      <div class="panel-heading"><div><p class="eyebrow">LATEST AVAILABLE READINGS</p><h3>Dumpster status</h3></div><button id="refresh-button" class="secondary">Refresh</button></div>
+      <div class="panel-heading"><div><p class="eyebrow">ÚLTIMAS LEITURAS DISPONÍVEIS</p><h3>Situação das caçambas</h3></div><button id="refresh-button" class="secondary">Atualizar</button></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Dumpster</th><th>Estimated fill</th><th>Health</th><th>Last report</th><th>Next-run decision</th></tr></thead>
-        <tbody id="dumpster-rows"><tr><td colspan="5">Loading…</td></tr></tbody>
+        <thead><tr><th>Caçamba</th><th>Endereço</th><th>Enchimento estimado</th><th>Situação</th><th>Último envio</th><th>Decisão para a próxima coleta</th></tr></thead>
+        <tbody id="dumpster-rows"><tr><td colspan="6">Carregando…</td></tr></tbody>
       </table></div>
     </section>
     <details class="panel register-panel">
-      <summary>Register a dumpster</summary>
+      <summary>Cadastrar uma caçamba</summary>
       <form id="register-form" class="register-form">
-        <label>ID<input name="id" required maxlength="64" placeholder="D005"></label>
-        <label>Name<input name="name" required maxlength="120" placeholder="Site name"></label>
-        <label>Latitude<input name="latitude" type="number" step="any" required></label>
-        <label>Longitude<input name="longitude" type="number" step="any" required></label>
-        <label>Empty distance (cm)<input name="empty_distance_cm" type="number" min="2" max="400" step="any" required></label>
-        <label>Full distance (cm)<input name="full_distance_cm" type="number" min="2" max="400" step="any" required></label>
-        <label>Collection threshold (%)<input name="fill_threshold_percent" type="number" min="0" max="100" value="75"></label>
-        <label>Daily fill rate (%)<input name="daily_fill_rate_percent" type="number" min="0" max="100" value="0"></label>
-        <button class="primary" type="submit">Add dumpster</button>
+        <label>ID<input name="id" required maxlength="64" placeholder="C005"></label>
+        <label>Nome<input name="name" required maxlength="120" placeholder="Ponto de coleta"></label>
+        <label class="address-field">Endereço completo<input name="address" type="text" required minlength="5" maxlength="300" autocomplete="street-address" placeholder="Rua, número, cidade, estado"></label>
+        <label>Distância com a caçamba vazia (cm)<input name="empty_distance_cm" type="number" min="2" max="400" step="any" required></label>
+        <label>Distância no nível máximo (cm)<input name="full_distance_cm" type="number" min="2" max="400" step="any" required></label>
+        <label>Limite para coleta (%)<input name="fill_threshold_percent" type="number" min="0" max="100" value="75"></label>
+        <label>Taxa diária de enchimento (%)<input name="daily_fill_rate_percent" type="number" min="0" max="100" value="0"></label>
+        <button class="primary" type="submit">Cadastrar caçamba</button>
+        <p class="address-privacy">O endereço é enviado ao serviço de geocodificação configurado para localizar o ponto no mapa. Informe o endereço de um local de operação, sem dados pessoais confidenciais.</p>
       </form>
     </details>
-    <footer>EcoTech · CicloRota MVP · Sensor values are estimated fill levels, not measured volume or mass.</footer>
+    <footer>EcoTech · CicloRota MVP · Os valores do sensor estimam o nível de enchimento; não medem volume nem massa.</footer>
   </main>
   <script src="/dashboard/app.js"></script>
 </body>
