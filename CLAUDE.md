@@ -218,3 +218,29 @@ When working on this project:
 7. **Next steps:** ESP32-based sensor MVP, database, monitoring platform, routing algorithm, dashboard, simulations, potential industrial-partner validation, and economic/scalability analysis.
 
 *Clarification applicable throughout:* The team subsequently specified **fixed collection schedules with dynamically selected stops and routes**, which takes precedence over less precise language in the original submission.
+
+
+## 12. MVP implementation decisions and software status (2026-10-17)
+
+The following choices were made to produce a runnable MVP. They are implementation choices, not additional team-confirmed requirements:
+
+- The backend uses FastAPI, Pydantic, SQLite, and a static browser dashboard.
+- Firmware targets PlatformIO/Arduino on an ESP32. The device validates and filters distance before posting; the backend recomputes the estimated fill percentage using that dumpster's registered calibration.
+- The default fixed collection weekdays are Monday and Thursday in the America/Sao_Paulo time zone. Both are configurable. Route planning rejects dates outside the configured weekdays and never changes a dispatch date.
+- The MVP models one truck and one depot. OSRM is optional. Without it, a configurable haversine detour approximation supports local demonstrations. Exact Held-Karp TSP is used through 12 stops, followed by nearest-neighbor plus 2-opt for larger runs.
+- Fuel use, fuel price, average speed, road detour, and CO2 conversion factors are configurable estimates. A monetary fuel comparison is shown; ROI/payback is not computed because capital and non-fuel operating costs are not available.
+- Demo coordinates and fill histories are synthetic. The simulator posts through the real HTTP API and does not validate physical sensing or industrial performance.
+
+Software verification recorded for this implementation:
+
+- Python API, database, policy, routing, sensing, simulator fixture, and native firmware logic suite: 19 tests passed.
+- The portable C++ sensor pipeline compiled with g++ and its executable test passed.
+- Dashboard JavaScript passed Node syntax checking.
+- A local Uvicorn server accepted simulated readings for four dumpsters and returned a route using the local distance fallback.
+
+Still unverified:
+
+- Building and flashing main.cpp with the ESP32 PlatformIO toolchain, because that toolchain and board were not available in this environment.
+- HC-SR04 wiring, calibration against real containers, ESP32 Wi-Fi/HTTP behavior, and industrial field durability.
+- OSRM against an actual configured road-network service. Its failure fallback is covered by a mocked test.
+- Hardware buffering during long network outages; the current firmware retries a bounded number of times and resumes at its next measurement interval.

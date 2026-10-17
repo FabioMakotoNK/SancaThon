@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CicloRota | EcoTech</title>
+  <link rel="stylesheet" href="/dashboard/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark">CR</div>
+    <div><p class="eyebrow">ECOTECH · REVERSE LOGISTICS</p><h1>CicloRota</h1></div>
+    <div class="schedule-chip"><span class="live-dot"></span><span id="schedule">Loading fixed schedule…</span></div>
+  </header>
+  <main>
+    <section class="intro">
+      <div><p class="eyebrow">COLLECTION OPERATIONS</p><h2>Monitor sites and plan the next fixed-day run.</h2>
+        <p class="muted">Fill estimates guide stop selection. Collection days stay fixed; only stops and route order change.</p></div>
+      <button id="plan-button" class="primary">Plan next scheduled run</button>
+    </section>
+    <section id="notice" class="notice" aria-live="polite"></section>
+    <section class="stats-grid" id="summary"></section>
+    <section class="content-grid">
+      <article class="panel map-panel">
+        <div class="panel-heading"><div><p class="eyebrow">UPCOMING FIXED RUN</p><h3 id="route-title">Route overview</h3></div><span id="route-provider" class="tag">No route yet</span></div>
+        <div id="route-map" class="route-map" role="img" aria-label="Schematic route plot"></div>
+        <p class="map-caption">Schematic site positions. Distance uses OSRM when configured; otherwise it is an approximate local road-distance estimate.</p>
+        <div id="route-stops" class="route-stops"></div>
+      </article>
+      <article class="panel metrics-panel">
+        <div class="panel-heading"><div><p class="eyebrow">ESTIMATED IMPACT</p><h3>Optimized vs fixed baseline</h3></div></div>
+        <div id="metrics"></div>
+        <p class="disclaimer">Fuel, CO₂, duration, and cost are estimates based on configured factors, not measured results.</p>
+      </article>
+    </section>
+    <section class="panel sites-panel">
+      <div class="panel-heading"><div><p class="eyebrow">LATEST AVAILABLE READINGS</p><h3>Dumpster status</h3></div><button id="refresh-button" class="secondary">Refresh</button></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Dumpster</th><th>Estimated fill</th><th>Health</th><th>Last report</th><th>Next-run decision</th></tr></thead>
+        <tbody id="dumpster-rows"><tr><td colspan="5">Loading…</td></tr></tbody>
+      </table></div>
+    </section>
+    <details class="panel register-panel">
+      <summary>Register a dumpster</summary>
+      <form id="register-form" class="register-form">
+        <label>ID<input name="id" required maxlength="64" placeholder="D005"></label>
+        <label>Name<input name="name" required maxlength="120" placeholder="Site name"></label>
+        <label>Latitude<input name="latitude" type="number" step="any" required></label>
+        <label>Longitude<input name="longitude" type="number" step="any" required></label>
+        <label>Empty distance (cm)<input name="empty_distance_cm" type="number" min="2" max="400" step="any" required></label>
+        <label>Full distance (cm)<input name="full_distance_cm" type="number" min="2" max="400" step="any" required></label>
+        <label>Collection threshold (%)<input name="fill_threshold_percent" type="number" min="0" max="100" value="75"></label>
+        <label>Daily fill rate (%)<input name="daily_fill_rate_percent" type="number" min="0" max="100" value="0"></label>
+        <button class="primary" type="submit">Add dumpster</button>
+      </form>
+    </details>
+    <footer>EcoTech · CicloRota MVP · Sensor values are estimated fill levels, not measured volume or mass.</footer>
+  </main>
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>
