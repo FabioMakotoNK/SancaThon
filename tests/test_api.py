@@ -189,7 +189,72 @@ def test_dashboard_and_static_assets_are_served(tmp_path):
     assert "google_geocoding_api_key" not in config
     assert "server-only-secret" not in str(config)
     assert "server-only-secret" not in app_js
+    dashboard_js = client.get("/dashboard/app.js").text
+    assert "api(\"/api/dumpsters\")" in dashboard_js
+    assert "api(\"/api/routes/latest\")" in dashboard_js
+    assert "window.setInterval(refresh, 15000)" in dashboard_js
+
+
+
+def test_esp32_http_payload_persists_and_updates_dashboard_data(tmp_path):
+    client = make_client(tmp_path / "esp32.sqlite3")
+    assert create_dumpster(client, "D1").status_code == 201
+    measured_at = datetime.now(timezone.utc).isoformat()
+    # Matches the firmware JSON: IDs, raw and filtered centimeters, and UTC time.
+    # Fill is omitted so the backend uses the calibration saved for D1.
+    payload = {
+        "measurement_id": "esp32-D1-00000001",
+        "dumpster_id": "D1",
+        "device_id": "esp32-D1",
+        "raw_distance_cm": 52.0,
+        "distance_cm": 50.0,
+        "measured_at": measured_at,
+    }
+    accepted = client.post("/api/measurements", json=payload)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "accepted"
+    assert accepted.json()["fill_percentage"] == 80.0
+
+    history = client.get("/api/measurements/D1").json()
+    assert len(history) == 1
+    assert history[0]["measurement_id"] == payload["measurement_id"]
+    assert history[0]["raw_distance_cm"] == 52.0
+    assert history[0]["distance_cm"] == 50.0
+    assert history[0]["fill_percentage"] == 80.0
+
+    registered = client.get("/api/dumpsters").json()[0]
+    assert registered["id"] == "D1"
+    latest = registered["latest"]
+    assert latest["device_id"] == "esp32-D1"
+    assert latest["raw_distance_cm"] == 52.0
+    assert latest["distance_cm"] == 50.0
+    assert latest["fill_percentage"] == 80.0
+    assert latest["measured_at"] == measured_at
+    run_day = next_collection_date(local_today("America/Sao_Paulo"), (0, 3))
+    plan = client.post("/api/routes/plan", json={"collection_date": run_day.isoformat()})
+    assert plan.status_code == 200, plan.text
+    assert [stop["dumpster_id"] for stop in plan.json()["route"]] == ["D1"]
     assert client.get("/dashboard/app.js").status_code == 200
+
+
+def test_esp32_measurement_rejects_invalid_missing_and_unknown_data(tmp_path):
+    client = make_client(tmp_path / "esp32-validation.sqlite3")
+    assert create_dumpster(client, "D1").status_code == 201
+    payload = {
+        "measurement_id": "esp32-D1-invalid-check",
+        "dumpster_id": "D1",
+        "device_id": "esp32-D1",
+        "raw_distance_cm": 52.0,
+        "distance_cm": 50.0,
+        "measured_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for bad_distance in (0, 401):
+        response = client.post("/api/measurements", json=dict(payload, distance_cm=bad_distance))
+        assert response.status_code == 422
+    assert client.post("/api/measurements", json=dict(payload, raw_distance_cm=401)).status_code == 422
+    assert client.post("/api/measurements", json={"dumpster_id": "D1", "distance_cm": 80}).status_code == 422
+    assert client.post("/api/measurements", json=dict(payload, dumpster_id="UNKNOWN")).status_code == 404
+    assert client.get("/api/measurements/D1").json() == []
 
 
 class StubGeocoder:

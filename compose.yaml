@@ -1,0 +1,60 @@
+services:
+  ciclorota:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ciclorota:local
+    restart: unless-stopped
+    init: true
+    command:
+      - uvicorn
+      - ciclorota.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --log-level
+      - "${CICLOROTA_LOG_LEVEL:-info}"
+    ports:
+      - "${CICLOROTA_BIND_ADDRESS:-0.0.0.0}:${CICLOROTA_PORT:-8000}:8000"
+    environment:
+      CICLOROTA_DB_PATH: "${CICLOROTA_DB_PATH:-/app/data/ciclorota.sqlite3}"
+      CICLOROTA_FIXED_DAYS: "${CICLOROTA_FIXED_DAYS:-MONDAY,THURSDAY}"
+      CICLOROTA_TIMEZONE: "${CICLOROTA_TIMEZONE:-America/Sao_Paulo}"
+      CICLOROTA_FILL_THRESHOLD: "${CICLOROTA_FILL_THRESHOLD:-75}"
+      CICLOROTA_STALE_SECONDS: "${CICLOROTA_STALE_SECONDS:-21600}"
+      CICLOROTA_OFFLINE_SECONDS: "${CICLOROTA_OFFLINE_SECONDS:-86400}"
+      CICLOROTA_GOOGLE_MAPS_BROWSER_KEY: "${CICLOROTA_GOOGLE_MAPS_BROWSER_KEY:-}"
+      CICLOROTA_GOOGLE_GEOCODING_API_KEY: "${CICLOROTA_GOOGLE_GEOCODING_API_KEY:-}"
+      CICLOROTA_GOOGLE_MAP_ID: "${CICLOROTA_GOOGLE_MAP_ID:-DEMO_MAP_ID}"
+      CICLOROTA_GEOCODER_TIMEOUT: "${CICLOROTA_GEOCODER_TIMEOUT:-5}"
+      CICLOROTA_OSRM_URL: "${CICLOROTA_OSRM_URL:-}"
+      CICLOROTA_OSRM_TIMEOUT: "${CICLOROTA_OSRM_TIMEOUT:-2}"
+      CICLOROTA_AVERAGE_SPEED_KMH: "${CICLOROTA_AVERAGE_SPEED_KMH:-30}"
+      CICLOROTA_FALLBACK_ROAD_FACTOR: "${CICLOROTA_FALLBACK_ROAD_FACTOR:-1.25}"
+      CICLOROTA_MAX_EXACT_STOPS: "${CICLOROTA_MAX_EXACT_STOPS:-12}"
+      CICLOROTA_FUEL_L_PER_100KM: "${CICLOROTA_FUEL_L_PER_100KM:-18}"
+      CICLOROTA_FUEL_COST_BRL_PER_L: "${CICLOROTA_FUEL_COST_BRL_PER_L:-6.20}"
+      CICLOROTA_CO2_KG_PER_L: "${CICLOROTA_CO2_KG_PER_L:-2.68}"
+    volumes:
+      - ciclorota-data:/app/data
+    networks:
+      - ciclorota-network
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  ciclorota-network:
+    driver: bridge
+
+volumes:
+  ciclorota-data:
+    driver: local

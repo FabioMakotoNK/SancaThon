@@ -1,3 +1,5 @@
+"""Legacy TCP CSV console only; it is not connected to the CicloRota API or database."""
+
 import socket
 
 HOST = "0.0.0.0"  # Listen on all computer network interfaces
@@ -8,7 +10,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
     server.bind((HOST, PORT))
     server.listen()
 
-    print(f"TCP server listening on port {PORT}")
+    print(f"Legacy TCP CSV logger listening on port {PORT}; data is not persisted or sent to CicloRota")
     print("Waiting for ESP32...")
 
     while True:

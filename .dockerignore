@@ -1,0 +1,10 @@
+**
+!pyproject.toml
+!README.md
+!ciclorota/
+!ciclorota/*.py
+!ciclorota/dashboard/
+!ciclorota/dashboard/*.html
+!ciclorota/dashboard/*.js
+!ciclorota/dashboard/*.css
+!ciclorota/dashboard/*.svg

@@ -25,8 +25,8 @@
 The team has described this intended end-to-end design:
 
 1. Deploy **ESP32 microcontrollers** with **HC-SR04 ultrasonic sensors** at waste dumpsters.
-2. Measure the distance from the sensor to the waste surface and derive an **estimated fill level**.
-3. Apply a **Kalman filter** to reduce noise in ultrasonic measurements. The precise placement of the filter in the software has not yet been confirmed; ESP32-side filtering is a practical default.
+2. Measure distance from the sensor to the waste surface. The Python backend derives estimated fill using the registered dumpster calibration.
+3. The ESP32 validates readings, rejects spikes, and applies the shared median plus scalar Kalman pipeline before sending filtered distance.
 4. Send measurements over **Wi-Fi using HTTP** to a **Python-based server**.
 5. Aggregate readings from **multiple dumpsters** on the server; track their latest reported occupancy and data freshness.
 6. Determine which dumpsters warrant collection on the next fixed collection run.
@@ -86,8 +86,8 @@ The team has described this intended end-to-end design:
 ### Measurement-processing guidance
 
 ```text
-Raw readings → validity checks → outlier handling → Kalman estimate
-             → calibrated estimated fill percentage → HTTP message
+Raw readings → range validation → median spike rejection → Kalman estimate
+             → HTTP distance report → server per-dumpster calibration → estimated fill
 ```
 
 - Validate timeouts, non-echoes, physically impossible distances, and transient spikes **before** interpreting a reading.
@@ -99,7 +99,7 @@ Raw readings → validity checks → outlier handling → Kalman estimate
 
 **Confirmed transport:** ESP32 → Wi-Fi → HTTP → Python server. Multiple ESP32 devices may report independently to the same service when network connectivity is available.
 
-**Illustrative API contract — proposal only (not an implemented or agreed endpoint):**
+**Implemented firmware ingestion contract: FastAPI `POST /api/measurements`.**
 
 ```http
 POST /api/measurements HTTP/1.1
@@ -108,14 +108,16 @@ Content-Type: application/json
 
 ```json
 {
+  "measurement_id": "esp32-D001-unique-id",
   "dumpster_id": "D001",
+  "device_id": "esp32-D001",
+  "raw_distance_cm": 43.1,
   "distance_cm": 42.5,
-  "fill_percentage": 78.3,
-  "measured_at": "2026-10-17T10:30:00-03:00"
+  "measured_at": "2026-10-17T13:30:00Z"
 }
 ```
 
-Suggested additional metadata where useful: device ID, calibration/version, sensor quality/validity, raw reading, battery/power status, and unique measurement ID.
+The firmware sends measurement ID, dumpster ID, device ID, raw distance in centimeters, filtered distance in centimeters, and a timezone-aware measured_at timestamp. The current ESP32 targets omit fill_percentage so server-side per-dumpster calibration is authoritative. The schema accepts an optional fill_percentage from other clients and checks it against the same calibration.
 
 **Recommended ingestion behaviors:**
 - Identify every physical dumpster/device consistently; prevent accidental mixing of readings.
@@ -265,3 +267,34 @@ Before any route has been planned, `GET /api/routes/latest` now returns HTTP 200
 ## 15. Dashboard em português brasileiro (2026-10-17)
 
 Todo o texto visível do dashboard está em português brasileiro: estrutura HTML, estados e erros, decisões de coleta, datas e números localizados, acessibilidade e textos dos marcadores. A Maps JavaScript API é carregada com `language=pt-BR` e `region=BR`; mensagens recebidas da API são convertidas para mensagens em português antes de aparecer na interface.
+
+
+## 16. ESP32-to-dashboard integration review (2026-10-17)
+
+The latest pull is identified from repository history as commit `be6b84d` on top of `a121b80`; it adds `hardware/sketch_oct17b/sketch_oct17b.ino` and `hardware/server.py`. The pulled sketch retained its HC-SR04 library read, GPIO TRIG 4 / ECHO 5, 30 ms echo timeout, 75 cm diagnostic ratio, and 500 ms acquisition interval. Its prior EMA and TCP CSV transport did not implement the project Kalman/HTTP/database path. The integrated sketch now applies the shared `firmware/include/sensor_pipeline.h` median/Kalman validation code and posts directly to `POST /api/measurements`.
+
+The ESP32 request contract is `measurement_id`, registered `dumpster_id`, `device_id`, `raw_distance_cm`, filtered `distance_cm`, and timezone-aware UTC `measured_at`. Distances are centimeters. IDs use the same configured dumpster identifier as registration. Bounded HTTP retries reuse one measurement ID. The ESP32 omits `fill_percentage`: FastAPI validates the ID and distances, calculates fill with that dumpster calibration, and stores raw/filtered distance, fill, measurement time, and receive time in SQLite. The dashboard reads the API-backed latest value and refreshes every 15 seconds. The simulator remains a separate HTTP client for no-hardware demonstrations.
+
+The PlatformIO target remains available and shares the same pipeline and HTTP field contract; its sample/default GPIO settings now match the working sketch at 4/5. Its included local calibration is used only for serial diagnostics, not as the source of dashboard fill values. Existing ignored local secrets are not replaced. Arduino sketch credentials and endpoint are separately configured in the ignored `hardware/sketch_oct17b/secrets.h` copied from its example.
+
+`hardware/server.py` remains only as a legacy TCP CSV console and does not store data or update CicloRota. Do not use it for end-to-end validation. Run FastAPI on the server computer LAN interface and configure the ESP32 with that reachable address, port 8000, and `/api/measurements`; `127.0.0.1` is not reachable from a separate device. Plain HTTP is for a trusted development LAN only.
+
+Two HTTP API integration tests and two firmware source-contract tests were added for this review, covering persistence, backend calibration, history/latest dashboard data, invalid/missing data, unknown IDs, pins, shared filtering, and JSON field names. `python3 -m py_compile` passed for the changed Python modules and tests. Attempts to launch `pytest -q`, `python3 -m pytest -q`, and the native `g++` test were stopped before command execution by the command sandbox error `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; therefore no test pass is claimed for this review. PlatformIO and Arduino CLI are not installed. Software tests do not validate the Arduino build, physical GPIO, HC-SR04 timing/electrical levels, Wi-Fi, NTP, HTTP behavior on the device, or real container calibration. The full automated suite and device-bench checks remain pending.
+
+## 17. Docker Compose deployment architecture (2026-10-17)
+
+The software MVP runs in one Docker Compose service, `ciclorota`. A multi-stage Dockerfile builds the existing Python project into a Python 3.12 slim runtime image and runs Uvicorn as a non-root user, bound to `0.0.0.0:8000`. The API serves the static Portuguese dashboard from the same origin, so browser requests use the page host and do not depend on Docker DNS. The ESP32 is physical hardware and is not containerized.
+
+SQLite remains the database. Compose mounts the named `ciclorota-data` volume at `/app/data`; the default `CICLOROTA_DB_PATH` is `/app/data/ciclorota.sqlite3`. SQLite schema initialization and additive migrations run on API startup. `docker compose down` preserves the data volume; removing it requires an explicit destructive volume removal.
+
+Compose publishes host port 8000 on `0.0.0.0` by default to permit a same-LAN ESP32 to post to `http://<host-LAN-IP>:8000/api/measurements`. The host firewall and Wi-Fi network must permit that traffic. The dashboard and API use `http://localhost:8000` from the host. Set `CICLOROTA_BIND_ADDRESS` and `CICLOROTA_PORT` to change host publication. Docker service names are for container-to-container traffic only and must not be used in browser code or firmware.
+
+No separate database, frontend, or OSRM container is needed by this implementation. OSRM remains optional and is configured with `CICLOROTA_OSRM_URL`; when unset or unreachable, the API uses its existing local approximate-distance route matrix. Google Maps browser and geocoding keys are passed through environment variables and are not committed. A missing Maps key leaves the API and dashboard data usable but disables Google map rendering and address lookup.
+
+Configuration lives in the ignored `.env` file, copied from the secret-free `.env.example`. Compose supplies defaults when no `.env` exists, so `docker compose up --build -d` is the quick start. The container health check requests `/api/health`; restart policy is `unless-stopped`. See README.md for quick start, LAN/ESP32 setup, maps and routing configuration, logs, persistence, rebuilds, safe reset, and testing. The optional `compose.dev.yaml` override bind-mounts `ciclorota/` read-only and enables Uvicorn reload; start it with `docker compose -f compose.yaml -f compose.dev.yaml up --build -d`.
+
+## 18. Docker integration verification status (2026-10-17)
+
+Docker support was implemented with a root Compose file, a multi-stage Python image, a named SQLite data volume, a health check, a Compose bridge network, an environment example, and LAN setup documentation. Docker and Python runtime validation could not be executed in the current command sandbox: each attempt to launch `docker compose config --quiet`, `docker compose up --build -d`, `python3 -m pytest -q`, and `python3 -m py_compile ciclorota/*.py tests/*.py` was stopped before the command ran by `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. The Docker executable is present on the host, but these commands did not reach Docker or Python.
+
+Consequently, image builds, Compose parsing, container health, HTTP API availability, SQLite persistence across container recreation, simulated measurement ingestion, route planning inside a container, and dashboard refresh from a container have not been verified here. The ESP32 remains physical hardware and was not validated through Docker or simulation. On a machine with a working Docker Engine and Compose plugin, run the documented quick start and API/simulator checks in README.md, then verify same-LAN device access and persistence across `docker compose down` followed by `docker compose up -d`.

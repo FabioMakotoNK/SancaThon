@@ -27,3 +27,12 @@ The repository started with project guidance only. This plan records the impleme
 13. [x] Replace the previous geocoding and map providers with Google Maps Platform; keep browser and server API keys separate; use Advanced Markers and a configurable map ID; document key restrictions, billing, and deployment requirements.
 14. [x] Diagnose local Google Maps key errors, reject documented placeholder keys, return a normal empty latest-route response, add a favicon, and verify the running local API plus automated tests.
 15. [x] Localize the complete dashboard in Brazilian Portuguese, including dynamic status/route/error messages, number and date formatting, accessibility text, and Google Maps language/region settings.
+
+
+## ESP32 integration follow-up (2026-10-17)
+
+16. [x] Compare the pull with repository history and trace the pulled CSV/TCP sketch against API, SQLite, and dashboard behavior. The pull is `be6b84d` on `a121b80`.
+17. [x] Preserve the pulled sensor library call and GPIO 4/5 configuration; replace TCP CSV with timestamped HTTP JSON to the existing FastAPI endpoint and shared Kalman pipeline.
+18. [x] Align both firmware targets on the same distance-based request. Leave fill calculation to the backend using that dumpster calibration; add API persistence, retrieval, validation, and firmware-contract tests.
+19. [x] Document Arduino and PlatformIO setup, LAN endpoint configuration, protocol fields, legacy TCP logger status, and physical validation limits in the root README, component guides, and CLAUDE.md.
+20. [ ] Execute the full automated suite and firmware toolchain build. Python source compilation passed. pytest and native g++ invocations failed before process launch with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. Arduino CLI, PlatformIO, and physical hardware are unavailable.

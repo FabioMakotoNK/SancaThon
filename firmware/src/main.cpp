@@ -9,10 +9,10 @@
 #include "sensor_pipeline.h"
 
 #ifndef HC_SR04_TRIG_PIN
-#define HC_SR04_TRIG_PIN 5
+#define HC_SR04_TRIG_PIN 4
 #endif
 #ifndef HC_SR04_ECHO_PIN
-#define HC_SR04_ECHO_PIN 18
+#define HC_SR04_ECHO_PIN 5
 #endif
 #ifndef MEASUREMENT_INTERVAL_MS
 #define MEASUREMENT_INTERVAL_MS 60000UL
@@ -74,7 +74,7 @@ String makeMeasurementId() {
   return String(id);
 }
 
-bool postMeasurement(float raw_cm, float filtered_cm, float fill_percent) {
+bool postMeasurement(float raw_cm, float filtered_cm) {
   if (!ensureWifi()) return false;
   char measured_at[32];
   if (!timestampUtc(measured_at, sizeof(measured_at))) {
@@ -86,10 +86,9 @@ bool postMeasurement(float raw_cm, float filtered_cm, float fill_percent) {
   snprintf(payload, sizeof(payload),
            "{\"measurement_id\":\"%s\",\"dumpster_id\":\"%s\","
            "\"device_id\":\"%s\",\"raw_distance_cm\":%.2f,"
-           "\"distance_cm\":%.2f,\"fill_percentage\":%.2f,"
-           "\"measured_at\":\"%s\"}",
+           "\"distance_cm\":%.2f,\"measured_at\":\"%s\"}",
            measurement_id.c_str(), DUMPSTER_ID, DEVICE_ID, raw_cm, filtered_cm,
-           fill_percent, measured_at);
+           measured_at);
 
   for (int attempt = 1; attempt <= kHttpAttempts; ++attempt) {
     HTTPClient http;
@@ -148,7 +147,7 @@ void sampleAndUpload() {
   }
   Serial.printf("Raw %.2f cm, filtered %.2f cm, estimated fill %.1f%%\n",
                 last_raw_cm, last_filtered_cm, fill);
-  postMeasurement(last_raw_cm, last_filtered_cm, fill);
+  postMeasurement(last_raw_cm, last_filtered_cm);
 }
 
 void setup() {

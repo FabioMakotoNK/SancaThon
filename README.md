@@ -1,12 +1,12 @@
 # CicloRota — EcoTech
 
-CicloRota is an IoT-assisted industrial waste collection MVP. ESP32 nodes report calibrated ultrasonic fill estimates to a Python service. The server stores readings from multiple dumpsters, marks stale devices, selects stops for the next configured collection day, and computes a single-truck route. The collection schedule stays fixed; only stop selection and stop order change.
+CicloRota is an IoT-assisted industrial waste collection MVP. ESP32 nodes report filtered ultrasonic distances; the Python service computes calibrated fill estimates. The server stores readings from multiple dumpsters, marks stale devices, selects stops for the next configured collection day, and computes a single-truck route. The collection schedule stays fixed; only stop selection and stop order change.
 
 This repository began with project guidance only. The implementation choices below are now the working MVP architecture. Hardware operation and industrial performance remain unverified.
 
 ## Features
 
-- ESP32 + HC-SR04 Arduino firmware with input validation, median spike rejection, scalar Kalman filtering, per-device calibration, Wi-Fi reconnect, NTP timestamps, HTTP retries, and idempotency IDs.
+- ESP32 + HC-SR04 Arduino firmware with input validation, median spike rejection, scalar Kalman filtering, server-owned per-dumpster calibration, Wi-Fi reconnect, NTP timestamps, HTTP retries, and idempotency IDs.
 - FastAPI REST API with SQLite persistence, multiple dumpsters, per-dumpster calibration/thresholds, timestamp ordering, duplicate handling, freshness health, and measurement history.
 - Stop selection based on current/projected fill at the next fixed weekday. Stale and offline data are flagged and left for manual review.
 - Optional OSRM distance/time matrices. A local haversine-based approximate road-distance fallback supports offline demos. The local solver uses exact Held-Karp TSP through 12 stops and nearest-neighbor plus 2-opt above that.
@@ -14,13 +14,87 @@ This repository began with project guidance only. The implementation choices bel
 - Synthetic multi-site sensor simulator that sends through the same HTTP API as hardware.
 - Native C++ tests for firmware measurement logic and Python tests for API, calibration, routing, and simulation definitions.
 
-## Run locally
+## Run with Docker Compose
+
+Docker Engine with the Docker Compose plugin (Compose v2) is required; Docker Desktop supplies both on Windows and macOS. A first build needs internet access to pull the Python image and install the project dependencies. The application dependencies, Python runtime, and SQLite are supplied by the image; a local Python or Node.js installation is not needed. ESP32 firmware remains on the physical device.
+
+From a fresh checkout, the complete app starts with:
+
+    docker compose up --build -d
+
+No `.env` file is required for the first start. To customize keys or settings, copy `.env.example` to `.env` and edit it before starting. The example contains no credentials. Compose reads `.env` automatically, and Git ignores it.
+
+Useful commands:
+
+    docker compose ps
+    docker compose logs -f
+    docker compose logs -f ciclorota
+    docker compose up --build -d
+    docker compose down
+
+For source editing, an optional development override bind-mounts the Python/dashboard package and enables Uvicorn reload. The normal Compose command remains the default:
+
+    docker compose -f compose.yaml -f compose.dev.yaml up --build -d
+
+Stop that development stack with:
+
+    docker compose -f compose.yaml -f compose.dev.yaml down
+
+The service is named `ciclorota`. Its health check calls `/api/health`. Both the Portuguese dashboard and API are served by that service on the same origin:
+
+- Dashboard: http://localhost:8000/
+- API health: http://localhost:8000/api/health
+- Interactive API docs: http://localhost:8000/docs
+
+Compose publishes host TCP port 8000 by default on `0.0.0.0`, so another device on the same LAN can reach it. Set `CICLOROTA_PORT` in `.env` if port 8000 is occupied; then use that port in the browser and firmware configuration. Set `CICLOROTA_BIND_ADDRESS=127.0.0.1` to restrict access to the local computer, but ESP32 devices will not be able to connect in that mode. On a trusted LAN, allow the selected TCP port through the host firewall and disable Wi-Fi client isolation. This MVP has no device authentication, so do not expose it to the public internet.
+
+### ESP32 on the Docker host's LAN
+
+Find the host computer's current LAN IP address and configure the selected firmware endpoint as:
+
+    http://<HOST-LAN-IP>:8000/api/measurements
+
+For example, if the host currently has address `192.168.1.20`, use `http://192.168.1.20:8000/api/measurements`. Update the endpoint after the host's DHCP address changes, or reserve a stable address in the router. Do not use `localhost`, `127.0.0.1`, or the Compose service name in firmware: those refer to the device itself or Docker's private network. The host firewall and Wi-Fi network must allow the ESP32 to reach the published port.
+
+Register the dumpster ID in CicloRota before configuring the same ID in firmware. The HTTP payload remains the existing JSON contract documented in the ESP32 measurement protocol section. Ingested observations are persisted in the SQLite volume and appear on the dashboard at its next refresh.
+
+### Environment, maps, and routing
+
+The Compose file passes the existing `CICLOROTA_*` settings from `.env` to the API container. The backend binds to `0.0.0.0:8000` inside Docker. Since the API also serves the dashboard, browser requests use the current page's origin; browser code does not use a Docker-only service hostname.
+
+To enable the Google map and address registration, set `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY` and `CICLOROTA_GOOGLE_GEOCODING_API_KEY` in `.env`, keeping them separate and restricted as described below. The browser key is necessarily returned to the browser and must be restricted to website referrers and the Maps JavaScript API. For access through the host LAN address, authorize that origin in Google Cloud as well. Keep `.env` private. After changing environment values, apply them by recreating the service:
+
+    docker compose up -d --force-recreate ciclorota
+
+Without Google credentials, the API and dashboard data table still work; the map shows setup guidance, and address geocoding cannot call Google. Coordinate-based API registration remains available.
+
+OSRM is still an optional external service; no map data or OSRM container is downloaded. Leave `CICLOROTA_OSRM_URL` blank to use the local approximate-distance fallback. If an OSRM service is running on the Docker host, use `http://host.docker.internal:5000` on Docker Desktop. On Linux, use an address reachable from the container (for example, the Docker host gateway) or attach the service to the Compose network and use its service DNS name. A route failure continues to fall back to the local approximation.
+
+### SQLite persistence and safe reset
+
+SQLite is stored at `/app/data/ciclorota.sqlite3` inside the container and mounted on the named `ciclorota-data` volume. The database is initialized and existing schema migrations run when the API starts. `docker compose down` removes the app container and network but preserves this volume. Rebuilding the image also preserves measurements and route history.
+
+To reset a development database, first stop the app and make a backup, then remove only the database file from the volume and restart the service:
+
+    docker compose stop ciclorota
+    docker compose cp ciclorota:/app/data/ciclorota.sqlite3 ./ciclorota-backup.sqlite3
+    docker compose run --rm --no-deps --entrypoint python ciclorota -c "from pathlib import Path; Path('/app/data/ciclorota.sqlite3').unlink(missing_ok=True)"
+    docker compose start ciclorota
+
+The API recreates an empty schema on startup. This reset removes dumpsters, measurements, route plans, and the geocoding cache; keep the backup if the data may be needed. Do not add `-v` to `docker compose down` unless you intentionally want to delete the persistent volume and all its data.
+
+The optional simulator can populate and exercise the same API from inside the running service:
+
+    docker compose exec ciclorota ciclorota-simulate --cycles 4 --base-url http://127.0.0.1:8000
+
+
+## Run locally (without Docker)
 
 Python 3.11 or newer is required.
 
     python3 -m venv .venv
     .venv/bin/python -m pip install -e '.[dev]'
-    .venv/bin/uvicorn ciclorota.api:app --reload
+    .venv/bin/uvicorn ciclorota.api:app --reload --host 0.0.0.0 --port 8000
 
 Open http://127.0.0.1:8000 for the dashboard. API documentation is at http://127.0.0.1:8000/docs.
 
@@ -48,7 +122,7 @@ All settings are read from environment variables when the API starts.
 | CICLOROTA_GOOGLE_GEOCODING_API_KEY | empty | Secret backend key restricted to Geocoding API |
 | CICLOROTA_GOOGLE_MAP_ID | DEMO_MAP_ID | Google Maps map ID; create a project map ID for deployment |
 | CICLOROTA_GEOCODER_TIMEOUT | 5 | Google Geocoding API timeout in seconds |
-| CICLOROTA_OSRM_URL | empty | Optional OSRM-compatible base URL, for example http://localhost:5000 |
+| CICLOROTA_OSRM_URL | empty | Optional OSRM URL; use host.docker.internal:5000 for a host service in Docker Desktop, or localhost:5000 outside Docker |
 | CICLOROTA_OSRM_TIMEOUT | 2 | OSRM request timeout in seconds |
 | CICLOROTA_AVERAGE_SPEED_KMH | 30 | Duration assumption for fallback distances |
 | CICLOROTA_FALLBACK_ROAD_FACTOR | 1.25 | Multiplier applied to straight-line distance in fallback mode |
@@ -68,7 +142,7 @@ To enable maps and address registration:
 1. Create a Google Cloud project with billing enabled, then enable **Maps JavaScript API** and **Geocoding API**.
 2. Create a browser key restricted to **Maps JavaScript API** and authorized website referrers. For local development, allow `http://localhost:8000/*` and `http://127.0.0.1:8000/*`.
 3. Create a separate server key restricted to **Geocoding API** and the backend's source IP. Keep this key secret.
-4. Replace both example key values below with actual keys from your Google Cloud project, then export them and the map ID before starting the API. The literal `your-...` values are placeholders and cannot load a map or geocode an address:
+4. Replace both example key values below with actual keys from your Google Cloud project. For Docker Compose, put these values in `.env`; when running Uvicorn directly, export the variables before starting the API. The literal `your-...` values are placeholders and cannot load a map or geocode an address:
 
        export CICLOROTA_GOOGLE_MAPS_BROWSER_KEY="your-referrer-restricted-browser-key"
        export CICLOROTA_GOOGLE_GEOCODING_API_KEY="your-server-only-geocoding-key"
@@ -82,7 +156,7 @@ The dashboard uses Google Maps JavaScript API with a configured map ID and Advan
 
 #### Troubleshooting `InvalidKeyMapError` / `InvalidKey`
 
-These console messages mean Google does not recognize the key being sent to Maps JavaScript API. Set a valid browser API key in `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY` (the separate Geocoding key does not replace it); do not use the example `your-...` value, a project number, or an OAuth client ID. The dashboard now detects example keys locally and displays setup guidance without loading Google's script. In Google Cloud Console, confirm the key belongs to an active project, Maps JavaScript API is enabled and allowed by that key's API restrictions, and the current site origin is allowed by its website referrer restriction. Restart Uvicorn after changing environment variables, then hard-refresh the dashboard. Google documents `InvalidKeyMapError` as an unrecognized key and `InvalidKey` as a malformed or incorrect key; see its [error reference](https://developers.google.com/maps/documentation/javascript/error-messages#invalid-key-map-error). Billing and API activation errors have separate console codes.
+These console messages mean Google does not recognize the key being sent to Maps JavaScript API. Set a valid browser API key in `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY` (the separate Geocoding key does not replace it); do not use the example `your-...` value, a project number, or an OAuth client ID. The dashboard now detects example keys locally and displays setup guidance without loading Google's script. In Google Cloud Console, confirm the key belongs to an active project, Maps JavaScript API is enabled and allowed by that key's API restrictions, and the current site origin is allowed by its website referrer restriction. For Docker Compose, recreate the service with `docker compose up -d --force-recreate ciclorota`; when running Uvicorn directly, restart the server. Then hard-refresh the dashboard. Google documents `InvalidKeyMapError` as an unrecognized key and `InvalidKey` as a malformed or incorrect key; see its [error reference](https://developers.google.com/maps/documentation/javascript/error-messages#invalid-key-map-error). Billing and API activation errors have separate console codes.
 
 OSRM mode calls its table service for a full distance/duration matrix. The MVP does not download map data or start OSRM itself; configure an already-running OSRM-compatible service. If the service is unreachable or returns incomplete routes, a warning is returned and the local approximation is used. The dashboard overlays the planned stop sequence on Google Maps. Route distance and duration come from the selected matrix provider; the fallback route line is illustrative, while OSRM distances use its road network.
 
@@ -110,7 +184,28 @@ The result is clamped to 0–100%. This is an estimated level, not certified vol
 
 The standard HC-SR04 commonly uses 5 V and may return a 5 V ECHO signal. Use an appropriate divider or level shifter before the ESP32's 3.3 V input. Check the exact board/module specifications before wiring.
 
-Firmware details and PlatformIO commands are in firmware/README.md. Copy firmware/include/secrets.h.example to firmware/include/secrets.h and set Wi-Fi, endpoint, device/dumpster IDs, pin mapping, and calibration. The secrets header is git-ignored. Firmware sends plain HTTP and uses public NTP servers, suitable only for a trusted development network. Production requires HTTPS/device authentication and managed credentials/time.
+Two ESP32 targets are available; setup details are in hardware/README.md and firmware/README.md. The pulled Arduino sketch at hardware/sketch_oct17b preserves the working Ultrasonic.read(CM) sensor path, GPIO 4/5, 30 ms echo timeout, 75 cm diagnostic ratio, and 500 ms sampling. It now uses the shared median/Kalman pipeline and posts measurements directly to CicloRota over HTTP. The PlatformIO firmware in firmware/ provides the alternate pulseIn reader and uses the same API and filtering pipeline. The PlatformIO example uses GPIO 4/5 to match the confirmed sketch pins; ignored local secrets files are not overwritten.
+
+Copy the appropriate secrets.h.example file to secrets.h for the selected firmware. Configure Wi-Fi, the full API endpoint, and a dumpster ID already registered in CicloRota. The Arduino sketch configuration is in hardware/sketch_oct17b/secrets.h; PlatformIO configuration is in firmware/include/secrets.h. Both send raw and filtered distance in centimeters and omit fill_percentage so the backend calculates fill from the calibration saved for that dumpster. The PlatformIO calibration constants remain available for local serial diagnostics only.
+
+The ESP32 must use the server computer LAN address, for example http://192.168.1.20:8000/api/measurements, not 127.0.0.1. Run Uvicorn bound to 0.0.0.0 on a trusted local network and allow the port through the host firewall. Firmware uses plain HTTP and public NTP servers; production requires HTTPS, device authentication, and managed credentials/time.
+
+### ESP32 measurement protocol
+
+The device sends `Content-Type: application/json` to `POST /api/measurements`:
+
+```json
+{
+  "measurement_id": "esp32-D1-unique-id",
+  "dumpster_id": "D1",
+  "device_id": "esp32-D1",
+  "raw_distance_cm": 82.0,
+  "distance_cm": 80.0,
+  "measured_at": "2026-10-17T13:30:00Z"
+}
+```
+
+`dumpster_id` must exactly match a registered dumpster. Both distances are centimeters; `distance_cm` is the filtered result. `measured_at` must include a timezone and firmware synchronizes it with NTP. The backend validates the payload, computes estimated fill with that dumpster calibration, stores the observation in SQLite, and exposes it through `GET /api/dumpsters` and `GET /api/measurements/{dumpster_id}`. Measurement IDs remain the same for bounded HTTP retries, making duplicate delivery idempotent. Invalid ranges and unknown dumpster IDs return HTTP 422 and 404 respectively. A successful reading appears on the dashboard at its next 15-second refresh. The simulator remains a separate API client for testing without sensor hardware.
 
 ## Tests
 

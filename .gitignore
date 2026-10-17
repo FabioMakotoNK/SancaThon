@@ -7,6 +7,7 @@ __pycache__/
 *.sqlite3-wal
 .env
 firmware/include/secrets.h
+hardware/sketch_oct17b/secrets.h
 .pio/
 dist/
 build/
