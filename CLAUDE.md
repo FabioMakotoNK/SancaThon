@@ -16,7 +16,7 @@
 
 **Target users.** Industrial facilities that generate substantial waste (particularly food processing, metalworking, and manufacturing), logistics and sustainability managers, operations teams, and outsourced industrial waste-collection providers.
 
-**Goal.** Create an IoT-assisted waste-collection system that measures estimated dumpster fill levels, sends the readings to a centralized Python service, selects necessary collection stops, and computes a more efficient route. A dashboard should make fill levels, recommended stops, routes, and operational/environmental indicators visible.
+**Goal.** Create an IoT-assisted waste-collection system that measures estimated dumpster fill levels, sends the readings to a centralized Python service, selects necessary collection stops, and computes a more efficient route. The current dashboard prioritizes fill levels, sensor measurements, freshness, and dumpster photographs. Backend route optimization remains available through the API and the restored Google map and planning control.
 
 **Important operational rule (clarified by the team):** **Collection days/times remain fixed. Only which dumpsters are visited and the route/order of stops change dynamically** based on current measurements and collection constraints. Earlier project descriptions mention dynamically scheduling collections; interpret that as *dynamic stop and route selection within the fixed collection schedule*, not as rescheduling truck dispatch dates.
 
@@ -33,7 +33,7 @@ The team has described this intended end-to-end design:
 7. Calculate an efficient collection route using **mapping/routing algorithms** and the selected stops.
 8. Present the relevant information in a **monitoring dashboard**.
 
-**MVP implementation choices recorded in this repository:** FastAPI, SQLite, documented REST schemas, Google Maps Platform for dashboard mapping and address geocoding, OSRM as an optional route-matrix service, and a static monitoring dashboard. See the README and section 13 for the current implementation. Site-specific calibration, operational thresholds, physical installation, and production deployment still require field validation.
+**MVP implementation choices recorded in this repository:** FastAPI, SQLite, documented REST schemas, Google Geocoding for address registration, OSRM as an optional route-matrix service, and a static monitoring dashboard. See the README and section 13 for the current implementation. Site-specific calibration, operational thresholds, physical installation, and production deployment still require field validation.
 
 ## 3. Intended system architecture
 
@@ -58,8 +58,8 @@ The team has described this intended end-to-end design:
                           ▼
 ┌─────────────────────────────────────────────┐
 │ Dashboard                                   │
-│ Dumpster status · Stops · Optimized routes  │
-│ Distance/cost/CO₂ metrics and comparisons   │
+│ Dumpster status · Sensor readings · Photos  │
+│ Measurement timestamps and sensor freshness   │
 └─────────────────────────────────────────────┘
 ```
 
@@ -146,17 +146,11 @@ Potential model: **Traveling Salesperson Problem (TSP)** for one truck with fixe
 
 **Scope note:** Fill level alone is a limited proxy for waste amount. If the model uses vehicle load, label estimates and assumptions explicitly. Do not assume all waste types have the same density.
 
-## 7. Dashboard and intended outputs
+## 7. Current dashboard and retained routing scope
 
-The project calls for a dashboard showing, where data are available:
+The dashboard displays registered dumpster identification, optional photographs, sensor-derived fill estimates, raw/filtered distance, measurement timestamps, and freshness-based sensor health. The responsive **Dumpster Photo Gallery** and measurement table refresh from the real backend every 15 seconds. Missing or broken photographs show a clearly labeled generic placeholder. Photographs never determine occupancy.
 
-- Dumpsters, locations, latest estimated fill levels, and last-report timestamps.
-- Device/measurement health (offline, stale, invalid, or normal).
-- Which dumpsters were selected for the upcoming fixed collection run and why.
-- The planned route, collection stops, distance, and estimated duration.
-- Comparisons against fixed-route baseline: distance traveled, stop counts, estimated fuel use, estimated CO₂, operating cost, and potential ROI.
-
-Avoid portraying unmeasured savings or emissions reductions as demonstrated facts. Document conversion factors and assumptions whenever estimating costs or emissions.
+The user explicitly requested the map back after the photo-gallery update. Google Maps, live dumpster markers, saved route overlay, route stop list, map navigation, and route planning control are restored alongside the gallery. Comparison charts remain omitted. Route optimization algorithms, APIs, fixed collection schedules, estimated operating metrics, and route database history remain part of EcoTech.
 
 ## 8. Validation plan
 
@@ -179,7 +173,7 @@ Suggested technical tests:
 - Loss of Wi-Fi, HTTP failures, duplicate and out-of-order messages.
 - Multiple simultaneous reporting dumpsters and stale-device behavior.
 - Route determinism/validity, vehicle capacity constraints, and overflow policy.
-- End-to-end demo: change a physical dumpster level → ingest an updated estimate → observe changed stop selection/route on the dashboard.
+- End-to-end demo: change a physical dumpster level → ingest an updated estimate → observe sensor-derived fill and timestamp updates on the dashboard; verify routing separately through its API.
 
 ## 9. MVP roadmap (planned work, not a completion report)
 
@@ -188,7 +182,7 @@ Suggested technical tests:
 3. **Storage and state:** Persist multiple dumpsters and expose current, timestamped readings.
 4. **Stop-selection rules:** Implement configurable occupancy thresholds plus stale-data and urgency handling.
 5. **Route optimization:** Add road-distance/time calculations, then a TSP/VRP approach as complexity requires.
-6. **Dashboard:** Visualize dumpsters, route, stop decisions, and measurement quality.
+6. **Dashboard:** Display dumpster monitoring, sensor measurements, and the photo gallery; route visualization is intentionally out of scope.
 7. **Evaluation:** Compare the conventional baseline with EcoTech using realistic scenarios, report assumptions and outcomes.
 8. **Field validation (future):** Test with a potential industrial partner, assess hardware durability, operating costs, and scalability.
 
@@ -204,7 +198,7 @@ When working on this project:
 4. **Don't overclaim accuracy.** A top-mounted ultrasonic sensor estimates a distance/level; true volume and weight require additional information.
 5. **Do not silently discard errors.** Distinguish bad measurements, stale devices, network failures, and genuine low fill levels.
 6. **Keep components modular.** Separate sensor I/O, filtering, fill conversion, HTTP client, backend validation/storage, stop selection, routing, and UI so each can be tested independently.
-7. **Favor an end-to-end working demo over premature complexity.** Establish reliable sensing → server ingestion → stop selection → route visualization first.
+7. **Favor an end-to-end working demo over premature complexity.** Establish reliable sensing → server ingestion → dashboard monitoring first; validate backend routing independently.
 8. **When introducing a new technology or design change**, state whether it is a recommendation or a confirmed team decision and update this document once the choice is made.
 9. **Report outcomes with evidence.** Label synthetic examples, simulations, calibration results, and production observations separately.
 10. **Avoid inventing repository structure, libraries, device pin assignments, or working endpoints.** Inspect actual files before writing code or instructions that depend on them.
@@ -248,7 +242,7 @@ Still unverified:
 - Hardware buffering during long network outages; the current firmware retries a bounded number of times and resumes at its next measurement interval.
 
 
-## 13. Address registration and Google Maps Platform coverage map (2026-10-17)
+## 13. Historical address registration and coverage map (superseded by section 19 for dashboard UI)
 
 The dashboard registers dumpsters using physical street addresses. The FastAPI backend resolves each submitted address with the Google Geocoding API and stores the entered address, formatted result, and coordinates. Coordinate-only registration remains available to API clients and the simulator. Existing SQLite databases are migrated to add address fields and a persistent lookup cache.
 
@@ -258,7 +252,7 @@ The dashboard renders all registered dumpster positions, fill and device-health 
 
 Verification for this provider migration: 29 Python tests passed, including Google Geocoding API response/status parsing, URL key usage, persistent-cache behavior, API key separation, address registration, database migration, and dashboard integration checks. JavaScript syntax and Python compilation passed. Live Google Maps display and geocoding were not tested because no Cloud project, keys, billing configuration, or deployed referrer restrictions are provided. The dashboard uses the documented demo map ID until a project-specific map ID is configured.
 
-## 14. Local Google Maps diagnostics and empty-route behavior (2026-10-17)
+## 14. Historical Google Maps diagnostics (dashboard map removed in section 19)
 
 The running local server was configured with the documented example browser key, which Google rejected with `InvalidKeyMapError`. The backend now classifies missing, placeholder, and provided browser keys. It withholds obvious example values from `GET /api/config`, and the dashboard displays an actionable setup message instead of loading Google Maps with those values. The server also treats an example Geocoding key as unconfigured. This local check does not validate real Google credentials; Google Cloud still must accept the supplied key, billing, API access, and referrer restrictions.
 
@@ -289,7 +283,7 @@ SQLite remains the database. Compose mounts the named `ciclorota-data` volume at
 
 Compose publishes host port 8000 on `0.0.0.0` by default to permit a same-LAN ESP32 to post to `http://<host-LAN-IP>:8000/api/measurements`. The host firewall and Wi-Fi network must permit that traffic. The dashboard and API use `http://localhost:8000` from the host. Set `CICLOROTA_BIND_ADDRESS` and `CICLOROTA_PORT` to change host publication. Docker service names are for container-to-container traffic only and must not be used in browser code or firmware.
 
-No separate database, frontend, or OSRM container is needed by this implementation. OSRM remains optional and is configured with `CICLOROTA_OSRM_URL`; when unset or unreachable, the API uses its existing local approximate-distance route matrix. Google Maps browser and geocoding keys are passed through environment variables and are not committed. A missing Maps key leaves the API and dashboard data usable but disables Google map rendering and address lookup.
+No separate database, frontend, or OSRM container is needed by this implementation. OSRM remains optional and is configured with `CICLOROTA_OSRM_URL`; when unset or unreachable, the API uses its existing local approximate-distance route matrix. Existing Google-related environment variables are preserved. Only the backend Geocoding key is used for address lookup by the current dashboard; its gallery and monitoring do not load Maps JavaScript or need a browser key.
 
 Configuration lives in the ignored `.env` file, copied from the secret-free `.env.example`. Compose supplies defaults when no `.env` exists, so `docker compose up --build -d` is the quick start. The container health check requests `/api/health`; restart policy is `unless-stopped`. See README.md for quick start, LAN/ESP32 setup, maps and routing configuration, logs, persistence, rebuilds, safe reset, and testing. The optional `compose.dev.yaml` override bind-mounts `ciclorota/` read-only and enables Uvicorn reload; start it with `docker compose -f compose.yaml -f compose.dev.yaml up --build -d`.
 
@@ -298,3 +292,67 @@ Configuration lives in the ignored `.env` file, copied from the secret-free `.en
 Docker support was implemented with a root Compose file, a multi-stage Python image, a named SQLite data volume, a health check, a Compose bridge network, an environment example, and LAN setup documentation. Docker and Python runtime validation could not be executed in the current command sandbox: each attempt to launch `docker compose config --quiet`, `docker compose up --build -d`, `python3 -m pytest -q`, and `python3 -m py_compile ciclorota/*.py tests/*.py` was stopped before the command ran by `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. The Docker executable is present on the host, but these commands did not reach Docker or Python.
 
 Consequently, image builds, Compose parsing, container health, HTTP API availability, SQLite persistence across container recreation, simulated measurement ingestion, route planning inside a container, and dashboard refresh from a container have not been verified here. The ESP32 remains physical hardware and was not validated through Docker or simulation. On a machine with a working Docker Engine and Compose plugin, run the documented quick start and API/simulator checks in README.md, then verify same-LAN device access and persistence across `docker compose down` followed by `docker compose up -d`.
+
+
+## 19. Dumpster monitoring and Photo Gallery (implemented; map removal superseded by section 20)
+
+At the user's explicit request, the static HTML/CSS/JavaScript dashboard now prioritizes sensor monitoring and visual inspection. The **Dumpster Photo Gallery** replaces the map, route overlay/stop list, impact comparison, route planning controls, and route-related UI requests. The page retains Portuguese navigation, responsive layouts, address registration, and 15-second measurement refresh. It displays real `/api/dumpsters` records with ID/name, optional photo, sensor-derived fill, raw/filtered centimeters, measurement timestamp, and freshness status. API failures retain the last successful snapshot with a warning; initial failure, loading, empty data, missing photo, and failed-image states are explicit. Status is inferred from measurement age, not a verified Wi-Fi connection.
+
+Backend route algorithms, `/api/routes/plan`, `/api/routes/latest`, measurement ingestion/history, and route database tables are preserved. No ESP32 or HC-SR04 firmware changes are required. Photos are never used to estimate fill.
+
+Photo storage is `ciclorota/dashboard/images/dumpsters/`; the static URL is `/dashboard/images/dumpsters/<filename>`. JPG/JPEG, PNG, WebP, AVIF, GIF, and absolute HTTP(S) image URLs are supported. A generic `dashboard/images/photo-placeholder.svg` is a missing-image icon, not a fake photograph. Existing untracked webcam images under `ciclorota/data/` have no confirmed dumpster association and remain untouched and unexposed.
+
+A nullable `dumpsters.image_url` column is added idempotently at startup; older records remain valid with NULL. `POST /api/dumpsters` accepts the optional field, `GET /api/dumpsters` returns it, and `PATCH /api/dumpsters/{id}/photo` updates/clears it for an existing record. The gallery's association form and registration form save links only. No upload support is implemented. Image URL validation rejects unsafe schemes, local filesystem paths, and local traversal. The image field does not alter measurement ingestion, calibration, or timestamps.
+
+Nested assets are included through `.dockerignore`, package-data configuration, and the existing Dockerfile. Compose networking, environment variables, services, port 8000, and the persistent SQLite volume are unchanged. Rebuild after adding local photos; the development bind mount serves them directly. Existing databases gain only the nullable image column; no destructive migration or separate migration system is introduced.
+
+Implemented: gallery, photo association forms/API, additive schema support, static packaging, missing-image handling, and monitoring UI. Not implemented: uploads, automatic camera-to-dumpster association, computer vision, photo-derived fill, authentication, or photo capture timestamps. Field calibration and physical sensor validation remain separate from software checks. Historical map descriptions above document prior behavior, not the current UI.
+
+### Verification of the gallery implementation
+
+Executed on the local Windows environment: all **58 automated tests passed**,
+including five Edge browser cases (1440 px desktop, 390 px and 320 px mobile,
+photo association editing, measurement refresh, API failure/recovery, and empty
+states) and the native C++ sensor pipeline test. JavaScript passed Node syntax
+checking. Existing integration timestamp assertions were corrected to compare
+the API's established second precision; the native test now uses relative
+compiler paths and an executable suffix for Windows compatibility. Firmware
+source and its measurement protocol were not modified.
+
+`docker compose up --build -d` succeeded. The rebuilt service is healthy on
+port 8000. Container checks verified the gallery, placeholder asset, image
+storage directory, optional photo response field, and retained routing API.
+Unassigned local webcam captures are explicitly excluded from the Docker build.
+A headless browser also verified the running Docker dashboard without inserting
+test data. At verification time the live database had zero registered dumpsters;
+multi-dumpster/image cases ran against isolated temporary SQLite records and
+explicitly labeled PNG test fixtures, not against the live deployment.
+
+No real dumpster photo association or physical sensor measurement was validated
+by these UI tests. Actual photographs must be supplied and linked to registered
+IDs. The test environment emitted a non-failing Starlette/httpx deprecation
+warning; optional browser tooling is used only for verification.
+
+
+## 20. Map restored at explicit user request
+
+The user reversed the previous map-removal instruction. The dashboard now includes the original Google Maps integration above the photo gallery, with live dumpster markers, reading/status popups, a saved route overlay, route stop labels, and the next-fixed-day route planning button. Existing Maps browser key/map ID and backend routing APIs are reused. The gallery, optional photograph associations, raw/filtered sensor measurements, and 15-second refresh remain intact. Map configuration/rendering errors do not block sensor or gallery updates. This supersedes statements above describing route/map visualization as absent; comparison charts remain omitted. No firmware, measurement protocol, database, or networking changes were made for this restoration.
+
+Restoration verification: 58 tests passed; JavaScript syntax checking passed; Docker rebuild completed and service is healthy. A headless Edge browser verified the live Google Maps renderer on localhost with the gallery and planning button present.
+
+
+## 21. Host camera-to-gallery integration (implemented)
+
+At the user's request, `ciclorota/camera.py` is now a host-side CLI with explicit `--dumpster-id` (or `--list`), `--source`, `--interval`, `--once`, `--preview`, `--base-url`, and `--output-dir` options. OpenCV is an optional `[camera]` dependency, imported lazily. No webcam opens at import or during API startup. The CLI checks the selected ID against real API records before opening the capture device; unknown IDs are rejected without creating records or measurements.
+
+The default output is `ciclorota/dashboard/images/dumpsters/camera-<id>-<digest>.jpg`. A complete JPEG is encoded, flushed to a temporary file, and atomically replaced. The first successful capture associates the URL with only the selected dumpster through the existing photo PATCH endpoint. Subsequent captures replace the latest file every five seconds by default. Camera errors and Ctrl+C release resources. Preview is optional, not required for dashboard display.
+
+Compose retains the SQLite volume and adds a read-only host-directory bind mount for `/app/ciclorota/dashboard/images/dumpsters`. OpenCV and USB camera access remain on the host, not in the API container. The frontend adds `_photo_v` to same-origin local photo URLs at each 15-second refresh; external/signed URLs remain unchanged. The map, route controls, sensor measurements, filtering, ingestion, and fill computation are preserved. Capture timestamps are printed separately, not misrepresented as sensor timestamps. No additional database migration, photo upload, computer vision, or automated ID association is introduced.
+
+Generated camera JPEGs and temporary files are excluded from Git and image builds. Unassigned `ciclorota/data` captures are preserved and remain unexposed. Captured photos represent whatever the explicitly selected camera sees; the software does not verify that it is aimed at the intended dumpster. Running on a different host requires sharing/synchronizing the image directory; the API photo link does not upload bytes. Physical camera validation requires a registered real dumpster and an appropriately aimed camera; automated tests use fake capture devices and temporary records instead of enabling a webcam.
+
+Camera integration verification: 68 tests passed, including fake-device capture/cleanup, unknown-ID rejection, safe atomic replacement, photo association isolation, and a browser check that overwritten image pixels refresh while sensor fields remain unchanged. Docker rebuilt successfully; live checks confirmed the read-only photo bind mount serves host updates immediately and API health is OK. The physical webcam was not activated. OpenCV imports successfully on the host.
+
+## 22. Camera demo for dumpster 1 (2026-10-18)
+
+At the user's explicit request, the standalone webcam script was replaced with the integrated capture CLI again. A dumpster with ID 1 was created through the live API with clearly labeled random demo location/calibration settings. No sensor measurements were fabricated. A real 640x480 webcam JPEG was captured, linked to record 1, and confirmed in the live browser, including an automatic image refresh. Continuous host capture runs at the default five-second interval; the gallery refreshes every fifteen seconds. Ten focused camera/cache-refresh regression tests passed. Demo calibration and location must be replaced before interpreting real container occupancy.

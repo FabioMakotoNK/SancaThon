@@ -15,7 +15,7 @@ from .config import Settings, google_api_key_status, weekday_names
 from .db import Database
 from .geocoding import AddressNotFound, GeocodingError, GoogleMapsGeocoder
 from .routing import Coordinate
-from .schemas import DumpsterCreate, MeasurementCreate, RoutePlanRequest
+from .schemas import DumpsterCreate, DumpsterImageUpdate, MeasurementCreate, RoutePlanRequest
 from .service import build_route_plan, iso_utc, local_today, next_collection_date, present_dumpster, utc_now
 
 logger = logging.getLogger("ciclorota")
@@ -91,6 +91,12 @@ def create_app(
     def list_dumpsters() -> list[dict[str, Any]]:
         now = utc_now()
         return [present_dumpster(row, settings, now) for row in database.list_dumpsters()]
+
+    @app.patch("/api/dumpsters/{dumpster_id}/photo")
+    def update_dumpster_photo(dumpster_id: str, payload: DumpsterImageUpdate) -> dict[str, Any]:
+        if not database.update_dumpster_image(dumpster_id, payload.image_url):
+            raise HTTPException(status_code=404, detail="Unknown dumpster_id")
+        return {"id": dumpster_id, "image_url": payload.image_url}
 
     @app.post("/api/measurements")
     def ingest_measurement(payload: MeasurementCreate) -> dict[str, Any]:

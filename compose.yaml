@@ -38,6 +38,7 @@ services:
       CICLOROTA_CO2_KG_PER_L: "${CICLOROTA_CO2_KG_PER_L:-2.68}"
     volumes:
       - ciclorota-data:/app/data
+      - ./ciclorota/dashboard/images/dumpsters:/app/ciclorota/dashboard/images/dumpsters:ro
     networks:
       - ciclorota-network
     healthcheck:

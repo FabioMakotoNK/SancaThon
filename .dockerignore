@@ -8,3 +8,14 @@
 !ciclorota/dashboard/*.js
 !ciclorota/dashboard/*.css
 !ciclorota/dashboard/*.svg
+
+!ciclorota/dashboard/images/
+!ciclorota/dashboard/images/**
+
+# Local webcam captures are not identified dumpster gallery assets.
+ciclorota/data/
+ciclorota/**/__pycache__/
+
+# Runtime camera captures are shared through the read-only photo bind mount.
+ciclorota/dashboard/images/dumpsters/camera-*.jpg
+ciclorota/dashboard/images/dumpsters/.capture-*.tmp
