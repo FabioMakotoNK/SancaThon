@@ -159,7 +159,8 @@ def test_schedule_rejects_non_fixed_weekday_and_stale_measurement(tmp_path):
 
 def test_projection_prevents_overflow_before_fixed_run(tmp_path):
     client = make_client(tmp_path / "api.sqlite3")
-    create_dumpster(client, "D1", threshold=95, rate=50)
+    # Overflow must occur even when the next scheduled collection is tomorrow.
+    create_dumpster(client, "D1", threshold=95, rate=100)
     post_fill(client, "D1", "projected", 20)
     run_day = next_collection_date(local_today("America/Sao_Paulo"), (0, 3))
     plan = client.post("/api/routes/plan", json={"collection_date": run_day.isoformat()}).json()
