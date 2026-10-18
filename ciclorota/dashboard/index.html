@@ -8,61 +8,71 @@
   <link rel="stylesheet" href="/dashboard/style.css">
 </head>
 <body>
+  <a class="skip-link" href="#monitoring">Ir para o monitoramento</a>
   <header class="topbar">
-    <div class="brand-mark">CR</div>
-    <div><p class="eyebrow">ECOTECH · LOGÍSTICA REVERSA</p><h1>CicloRota</h1></div>
-    <div class="schedule-chip"><span class="live-dot"></span><span id="schedule">Carregando agenda fixa…</span></div>
+    <div class="brand-mark" aria-hidden="true">CR</div>
+    <div><p class="eyebrow">ECOTECH · MONITORAMENTO INDUSTRIAL</p><h1>CicloRota</h1></div>
+    <nav aria-label="Navegação principal"><a href="#monitoring">Monitoramento</a><a href="#map">Mapa</a><a href="#gallery">Fotografias</a><a href="#registration">Cadastro</a></nav>
+    <span class="connection-chip" id="connection-status" role="status">Conectando ao servidor…</span>
   </header>
   <main>
-    <section class="intro">
-      <div><p class="eyebrow">OPERAÇÃO DE COLETA</p><h2>Monitore os pontos e planeje a próxima coleta programada.</h2>
-        <p class="muted">As estimativas de enchimento orientam a seleção dos pontos. Os dias de coleta permanecem fixos; apenas os pontos e a ordem da rota mudam.</p></div>
-      <button id="plan-button" class="primary">Planejar próxima coleta</button>
+    <section class="intro" id="monitoring">
+      <div><p class="eyebrow">MEDIÇÕES DO SENSOR · INSPEÇÃO VISUAL</p><h2>Cada caçamba, uma visão mais clara.</h2>
+        <p class="muted">Acompanhe o enchimento estimado, confira as últimas medições e identifique os pontos pelas fotografias.</p></div>
+      <div class="refresh-controls"><button id="refresh-button" class="primary" type="button">Atualizar leituras</button><span id="last-updated">Atualização automática a cada 15 segundos</span></div>
     </section>
-    <section id="notice" class="notice" aria-live="polite"></section>
-    <section class="stats-grid" id="summary"></section>
-    <section class="content-grid">
-      <article class="panel map-panel">
-        <div class="panel-heading"><div><p class="eyebrow">MAPA AO VIVO · ATUALIZAÇÃO A CADA 15 SEGUNDOS</p><h3 id="route-title">Localização das caçambas</h3></div><span id="route-provider" class="tag">Todos os pontos cadastrados</span></div>
-        <div id="route-map" class="route-map" role="application" aria-label="Mapa interativo com a localização das caçambas"></div>
-        <div class="map-legend" aria-label="Legenda de status do mapa">
-          <span><i class="legend-dot low"></i>Normal: abaixo de 70%</span>
-          <span><i class="legend-dot medium"></i>Enchimento: 70–89%</span>
-          <span><i class="legend-dot high"></i>Enchimento: 90% ou mais</span>
-          <span><i class="legend-dot attention"></i>Atrasada, off-line ou sem leitura</span>
-        </div>
-        <p class="map-caption">Os marcadores mostram cada caçamba cadastrada. O nível de enchimento e a situação do dispositivo são atualizados a cada 15 segundos. Clique em um marcador para ver o endereço, a última leitura e a decisão de coleta. A atribuição do Google Maps aparece no mapa.</p>
-        <div id="route-stops" class="route-stops"></div>
-      </article>
-      <article class="panel metrics-panel">
-        <div class="panel-heading"><div><p class="eyebrow">IMPACTO ESTIMADO</p><h3>Rota otimizada e rota de referência</h3></div></div>
-        <div id="metrics"></div>
-        <p class="disclaimer">Combustível, CO₂, duração e custo são estimativas calculadas com os fatores configurados, não resultados medidos.</p>
-      </article>
+    <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    <section class="stats-grid" id="summary" aria-label="Resumo do monitoramento" aria-busy="true">
+      <article class="stat-card">Carregando indicadores…</article>
     </section>
-    <section class="panel sites-panel">
-      <div class="panel-heading"><div><p class="eyebrow">ÚLTIMAS LEITURAS DISPONÍVEIS</p><h3>Situação das caçambas</h3></div><button id="refresh-button" class="secondary">Atualizar</button></div>
+    <section class="panel map-panel" id="map" aria-labelledby="route-title">
+      <div class="panel-heading"><div><p class="eyebrow">MAPA AO VIVO · ATUALIZAÇÃO A CADA 15 SEGUNDOS</p><h3 id="route-title">Localização das caçambas</h3></div><button id="plan-button" class="secondary" type="button">Planejar próxima coleta</button></div>
+      <p class="section-description">Veja a localização dos pontos, as últimas leituras e a rota da próxima coleta programada.</p>
+      <div id="route-map" class="route-map" role="region" aria-label="Mapa interativo com a localização das caçambas">Carregando mapa…</div>
+      <div class="map-legend"><span><i class="legend-dot low"></i>Abaixo de 70%</span><span><i class="legend-dot medium"></i>70–89%</span><span><i class="legend-dot high"></i>90% ou mais</span><span><i class="legend-dot attention"></i>Sensor para verificar</span></div>
+      <p id="map-status" class="section-description" role="status">Carregando a última rota…</p>
+      <div id="route-stops" class="route-stops"></div>
+    </section>
+    <section class="panel gallery-panel" id="gallery" aria-labelledby="gallery-title">
+      <div class="panel-heading"><div><p class="eyebrow">IDENTIFICAÇÃO E INSPEÇÃO VISUAL</p><h3 id="gallery-title" lang="en">Dumpster Photo Gallery</h3></div><span class="tag" id="gallery-count">Carregando…</span></div>
+      <p class="section-description">Fotografias identificam as caçambas. O enchimento é calculado exclusivamente com as medições ultrassônicas.</p>
+      <div id="photo-gallery" class="photo-grid" aria-busy="true"><div class="empty-state">Carregando caçambas e últimas leituras…</div></div>
+      <details class="photo-settings">
+        <summary>Associar ou alterar uma fotografia</summary>
+        <form id="photo-form" class="photo-form">
+          <label>Caçamba<select id="photo-dumpster" name="dumpster_id" required disabled><option value="">Carregando caçambas…</option></select></label>
+          <label>Endereço da fotografia (opcional)<input name="image_url" id="photo-url" maxlength="2048" placeholder="/dashboard/images/dumpsters/foto.jpg" aria-describedby="photo-help"></label>
+          <button class="secondary" type="submit" disabled>Salvar fotografia</button>
+          <p class="form-help" id="photo-help">Use um arquivo local já disponível no servidor ou uma URL HTTP(S). Deixe vazio para remover a associação. Não há envio de arquivos.</p>
+        </form>
+      </details>
+    </section>
+    <section class="panel sites-panel" aria-labelledby="readings-title">
+      <div class="panel-heading"><div><p class="eyebrow">DADOS DO HC-SR04 · FILTRO DE KALMAN</p><h3 id="readings-title">Últimas medições</h3></div><span class="tag" id="schedule">Carregando agenda fixa…</span></div>
+      <p class="section-description">A situação do sensor é estimada pela idade da medição; não representa uma conexão Wi-Fi verificada.</p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Caçamba</th><th>Endereço</th><th>Enchimento estimado</th><th>Situação</th><th>Último envio</th><th>Decisão para a próxima coleta</th></tr></thead>
-        <tbody id="dumpster-rows"><tr><td colspan="6">Carregando…</td></tr></tbody>
+        <caption class="sr-only">Última medição válida de cada caçamba cadastrada</caption>
+        <thead><tr><th scope="col">Caçamba</th><th scope="col">Localização</th><th scope="col">Enchimento estimado</th><th scope="col">Distância bruta</th><th scope="col">Distância filtrada</th><th scope="col">Última medição</th><th scope="col">Sensor</th></tr></thead>
+        <tbody id="dumpster-rows"><tr><td colspan="7">Carregando medições…</td></tr></tbody>
       </table></div>
     </section>
-    <details class="panel register-panel">
+    <details class="panel register-panel" id="registration">
       <summary>Cadastrar uma caçamba</summary>
       <form id="register-form" class="register-form">
-        <label>ID<input name="id" required maxlength="64" placeholder="C005"></label>
+        <label>ID<input name="id" required maxlength="64" pattern="[A-Za-z0-9_.-]+" placeholder="Identificador único"></label>
         <label>Nome<input name="name" required maxlength="120" placeholder="Ponto de coleta"></label>
-        <label class="address-field">Endereço completo<input name="address" type="text" required minlength="5" maxlength="300" autocomplete="street-address" placeholder="Rua, número, cidade, estado"></label>
+        <label class="wide-field">Endereço completo<input name="address" required minlength="5" maxlength="300" autocomplete="street-address" placeholder="Rua, número, cidade, estado"></label>
         <label>Distância com a caçamba vazia (cm)<input name="empty_distance_cm" type="number" min="2" max="400" step="any" required></label>
         <label>Distância no nível máximo (cm)<input name="full_distance_cm" type="number" min="2" max="400" step="any" required></label>
         <label>Limite para coleta (%)<input name="fill_threshold_percent" type="number" min="0" max="100" value="75"></label>
         <label>Taxa diária de enchimento (%)<input name="daily_fill_rate_percent" type="number" min="0" max="100" value="0"></label>
+        <label class="wide-field">Endereço da fotografia (opcional)<input name="image_url" maxlength="2048" placeholder="/dashboard/images/dumpsters/foto.jpg"></label>
         <button class="primary" type="submit">Cadastrar caçamba</button>
-        <p class="address-privacy">O endereço é enviado ao serviço de geocodificação configurado para localizar o ponto no mapa. Informe o endereço de um local de operação, sem dados pessoais confidenciais.</p>
+        <p class="form-help">O endereço é enviado ao serviço de geocodificação configurado para localizar o ponto de operação. Não inclua dados pessoais confidenciais.</p>
       </form>
     </details>
-    <footer>EcoTech · CicloRota MVP · Os valores do sensor estimam o nível de enchimento; não medem volume nem massa.</footer>
+    <footer>EcoTech · CicloRota MVP · Enchimento estimado por sensor; fotografias não medem ocupação, volume ou massa.</footer>
   </main>
-  <script src="/dashboard/app.js"></script>
+  <script src="/dashboard/app.js" defer></script>
 </body>
 </html>

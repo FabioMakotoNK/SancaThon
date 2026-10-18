@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+const PLACEHOLDER = "/dashboard/images/photo-placeholder.svg";
 let cachedDumpsters = [];
 let cachedPlan = null;
 let coverageMap = null;
@@ -12,54 +13,220 @@ let mapMarkers = [];
 let routeLine = null;
 let googleMapsScriptPromise = null;
 let googleMapsAuthFailed = false;
-let refreshInProgress = false;
 
+let refreshInProgress = false;
+let hasLoaded = false;
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[char]));
+}
 function statusLabel(status) {
-  return ({normal: "Normal", stale: "Atrasado", offline: "Off-line", no_data: "Sem leitura"})[status] || status;
+  return ({normal: "Leitura recente", stale: "Leitura atrasada", offline: "Off-line estimado", no_data: "Sem leitura"})[status] || "Situação desconhecida";
+}
+function statusClass(status) {
+  return ["normal", "stale", "offline", "no_data"].includes(status) ? status : "no_data";
 }
 function weekdayLabel(day) {
-  return ({
-    Monday: "segunda-feira", Tuesday: "terça-feira", Wednesday: "quarta-feira",
-    Thursday: "quinta-feira", Friday: "sexta-feira", Saturday: "sábado", Sunday: "domingo"
-  })[day] || day;
+  return ({Monday: "segunda-feira", Tuesday: "terça-feira", Wednesday: "quarta-feira", Thursday: "quinta-feira", Friday: "sexta-feira", Saturday: "sábado", Sunday: "domingo"})[day] || day;
 }
 function formatNumber(value, digits = 1) {
-  return new Intl.NumberFormat("pt-BR", {
-    minimumFractionDigits: digits, maximumFractionDigits: digits
-  }).format(Number(value));
+  return new Intl.NumberFormat("pt-BR", {minimumFractionDigits: digits, maximumFractionDigits: digits}).format(value);
+}
+function formatDistance(value) {
+  return typeof value === "number" && Number.isFinite(value) ? formatNumber(value) + " cm" : "—";
+}
+function fillValue(item) {
+  const value = item.latest?.fill_percentage;
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
+}
+function fillClass(fill) { return fill >= 90 ? "full" : fill >= 70 ? "high" : ""; }
+function timestampHtml(value) {
+  if (!value || !Number.isFinite(new Date(value).getTime())) return "Sem medição";
+  return '<time datetime="' + escapeHtml(value) + '">' + escapeHtml(new Date(value).toLocaleString("pt-BR")) + '</time>';
+}
+function statusHtml(item) {
+  return '<span class="status ' + statusClass(item.status) + '">' + escapeHtml(statusLabel(item.status)) + '</span>';
+}
+function safePhotoUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value, window.location.origin);
+    if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) {
+      // Local files may be overwritten by camera.py. Refresh their bytes too.
+      // Leave external/signed image URLs untouched.
+      if (url.origin === window.location.origin && url.pathname.startsWith("/dashboard/images/dumpsters/")) {
+        url.searchParams.set("_photo_v", String(Date.now()));
+      }
+      return url.href;
+    }
+  } catch (_) { /* Fall back to the local placeholder. */ }
+  return null;
 }
 function translateBackendMessage(message) {
   const exact = {
-    "Request failed": "Não foi possível concluir a solicitação.",
-    "Failed to fetch": "Não foi possível conectar ao servidor. Confira se ele está em execução e tente novamente.",
-    "NetworkError when attempting to fetch resource.": "Não foi possível conectar ao servidor. Confira se ele está em execução e tente novamente.",
-    "Load failed": "Não foi possível conectar ao servidor. Confira se ele está em execução e tente novamente.",
     "Dumpster ID already exists": "Já existe uma caçamba com esse ID.",
     "Could not create dumpster": "Não foi possível cadastrar a caçamba.",
-    "Enter a street address to geocode": "Informe um endereço para localizar a caçamba.",
+    "Unknown dumpster_id": "A caçamba não está cadastrada. Atualize a página.",
     "No map location matched that street address": "Nenhum local foi encontrado para esse endereço.",
-    "Google Geocoding API key is not configured": "A chave da API de geocodificação não está configurada.",
-    "Google address lookup service is unavailable": "O serviço de localização de endereços está indisponível.",
-    "Google address lookup service could not resolve the address": "O serviço não conseguiu localizar esse endereço.",
-    "Google address lookup returned an invalid response": "O serviço de localização retornou uma resposta inválida.",
-    "Google address lookup returned an invalid location": "O serviço de localização retornou coordenadas inválidas.",
-    "measured_at cannot be more than five minutes in the future": "O horário da medição não pode estar mais de cinco minutos no futuro.",
-    "Unknown dumpster_id": "A caçamba informada não está cadastrada.",
-    "fill_percentage does not match dumpster calibration": "O percentual de enchimento não corresponde à calibração da caçamba.",
-    "Cannot plan a route for a past collection date": "Não é possível planejar uma rota para uma data de coleta passada."
+    "Google Geocoding API key is not configured": "A geocodificação não está configurada. Configure a chave do servidor ou cadastre por coordenadas na API.",
+    "Google address lookup service is unavailable": "O serviço de localização de endereços está indisponível."
   };
-  if (exact[message]) return exact[message];
-  const schedule = message.match(/^Collection date must follow the fixed weekday schedule: (.+)$/);
-  if (schedule) {
-    const days = schedule[1].split(", ").map(weekdayLabel).join(" e ");
-    return "A data precisa respeitar os dias fixos de coleta: " + days + ".";
-  }
-  if (message.startsWith("Route planning failed:")) return "Não foi possível planejar a rota. Tente novamente.";
-  if (message.startsWith("OSRM unavailable")) return "O serviço de rotas está indisponível. Foram usadas distâncias aproximadas.";
-  if (message.startsWith("Google Maps JavaScript API failed")) return "Não foi possível carregar o Google Maps. Verifique a conexão e a configuração da chave.";
-  if (message.startsWith("[")) return "Os dados enviados são inválidos. Confira os campos e tente novamente.";
-  return "Não foi possível concluir a operação. Confira os dados e tente novamente.";
+  return exact[message] || "Não foi possível concluir a solicitação. Confira os campos, a conexão e o servidor.";
 }
+async function api(path, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(path, {...options, signal: controller.signal});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      let message = typeof body.detail === "string" ? body.detail : "";
+      if (Array.isArray(body.detail)) {
+        const imageError = body.detail.some((error) => error.loc?.includes("image_url"));
+        if (imageError) throw new Error("Use uma URL HTTP(S) ou /dashboard/images/dumpsters/foto.jpg para a fotografia.");
+      }
+      throw new Error(translateBackendMessage(message));
+    }
+    return body;
+  } finally { window.clearTimeout(timeout); }
+}
+function showNotice(message, error = false) {
+  $("notice").textContent = message;
+  $("notice").className = "notice visible" + (error ? " error" : "");
+}
+function renderSummary(dumpsters) {
+  const fresh = dumpsters.filter((item) => item.status === "normal" && fillValue(item) !== null);
+  const average = fresh.length ? fresh.reduce((sum, item) => sum + fillValue(item), 0) / fresh.length : null;
+  const attention = dumpsters.filter((item) => item.status !== "normal").length;
+  const values = [
+    ["Caçambas cadastradas", dumpsters.length, "Pontos registrados no sistema"],
+    ["Com leitura recente", fresh.length, "Medições dentro do prazo configurado"],
+    ["Enchimento médio estimado", average === null ? "—" : formatNumber(average) + "%", "Somente leituras recentes"],
+    ["Sensores para verificar", attention, "Atrasados, off-line ou sem leitura"]
+  ];
+  $("summary").innerHTML = values.map(([label, value, note]) => '<article class="stat-card"><p class="stat-label">' + escapeHtml(label) + '</p><div class="stat-value">' + escapeHtml(value) + '</div><p class="stat-note">' + escapeHtml(note) + '</p></article>').join("");
+}
+function renderGallery(dumpsters) {
+  $("gallery-count").textContent = dumpsters.length + (dumpsters.length === 1 ? " caçamba" : " caçambas");
+  $("photo-gallery").innerHTML = dumpsters.length ? dumpsters.map((item) => {
+    const fill = fillValue(item);
+    const photo = safePhotoUrl(item.image_url);
+    return '<article class="dumpster-card" data-dumpster-id="' + escapeHtml(item.id) + '">' +
+      '<div class="photo-frame"><img src="' + escapeHtml(photo || PLACEHOLDER) + '" alt="' + escapeHtml(photo ? "Fotografia da caçamba " + item.id + " — " + item.name : "Fotografia não disponível para a caçamba " + item.id) + '" loading="lazy" decoding="async" width="640" height="400"><span class="photo-label"' + (photo ? ' hidden' : '') + '>Sem fotografia</span></div>' +
+      '<div class="card-body"><div class="card-heading"><div><span class="site-id">' + escapeHtml(item.id) + '</span><h4>' + escapeHtml(item.name) + '</h4></div>' + statusHtml(item) + '</div>' +
+      '<p class="card-address">' + escapeHtml(item.address || item.geocoded_label || "Localização cadastrada por coordenadas") + '</p>' +
+      '<div class="level-heading"><span>Enchimento estimado</span><strong>' + (fill === null ? '—' : formatNumber(fill) + '%') + '</strong></div>' +
+      (fill === null ? '<p class="no-reading">Aguardando a primeira medição do sensor.</p>' : '<progress class="fill-progress ' + fillClass(fill) + '" max="100" value="' + fill + '" aria-label="Enchimento estimado da caçamba ' + escapeHtml(item.id) + '">' + formatNumber(fill) + '%</progress>') +
+      '<dl class="sensor-details"><div><dt>Distância bruta</dt><dd>' + formatDistance(item.latest?.raw_distance_cm) + '</dd></div><div><dt>Distância filtrada</dt><dd>' + formatDistance(item.latest?.distance_cm) + '</dd></div></dl>' +
+      '<div class="measurement-time"><span>Última medição</span><div>' + timestampHtml(item.latest?.measured_at) + '</div></div>' +
+      (item.latest && item.status !== 'normal' ? '<p class="stale-note">Último valor conhecido; verifique o sensor antes de usar esta leitura.</p>' : '') + '</div></article>';
+  }).join("") : '<div class="empty-state"><strong>Nenhuma caçamba cadastrada.</strong><p>Cadastre um ponto para acompanhar suas medições e associar uma fotografia.</p><a href="#registration" id="register-link">Cadastrar primeira caçamba</a></div>';
+  for (const img of $("photo-gallery").querySelectorAll("img")) {
+    img.addEventListener("error", () => {
+      if (img.dataset.fallback) return;
+      img.dataset.fallback = "true";
+      img.src = PLACEHOLDER;
+      img.alt = "Fotografia indisponível";
+      const label = img.parentElement.querySelector(".photo-label");
+      label.hidden = false;
+      label.textContent = "Fotografia indisponível";
+    });
+  }
+}
+function renderDumpsters(dumpsters) {
+  $("dumpster-rows").innerHTML = dumpsters.length ? dumpsters.map((item) => {
+    const fill = fillValue(item);
+    return '<tr><th scope="row"><span class="site-name">' + escapeHtml(item.name) + '</span><span class="site-id">' + escapeHtml(item.id) + '</span></th><td class="address-cell">' + escapeHtml(item.address || item.geocoded_label || "Coordenadas cadastradas") + '</td><td>' + (fill === null ? '—' : formatNumber(fill) + '%') + '</td><td>' + formatDistance(item.latest?.raw_distance_cm) + '</td><td>' + formatDistance(item.latest?.distance_cm) + '</td><td>' + timestampHtml(item.latest?.measured_at) + '</td><td>' + statusHtml(item) + '</td></tr>';
+  }).join("") : '<tr><td colspan="7">Nenhuma caçamba cadastrada.</td></tr>';
+}
+function updatePhotoSelector() {
+  const select = $("photo-dumpster");
+  const selected = select.value;
+  const ids = cachedDumpsters.map((item) => item.id);
+  if (JSON.stringify([...select.options].map((option) => option.value).filter(Boolean)) !== JSON.stringify(ids)) {
+    select.innerHTML = '<option value="">Selecione uma caçamba</option>' + cachedDumpsters.map((item) => '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(item.id + " · " + item.name) + '</option>').join("");
+    select.value = selected;
+  }
+  select.disabled = !cachedDumpsters.length;
+  $("photo-form").querySelector("button").disabled = !cachedDumpsters.length;
+}
+async function refresh() {
+  if (refreshInProgress) return;
+  refreshInProgress = true;
+  $("refresh-button").disabled = true;
+  $("refresh-button").textContent = "Atualizando…";
+  try {
+    const dumpsters = await api("/api/dumpsters");
+    if (!Array.isArray(dumpsters)) throw new Error("Invalid API response");
+    cachedDumpsters = dumpsters;
+    renderSummary(dumpsters);
+    renderGallery(dumpsters);
+    renderDumpsters(dumpsters);
+    updatePhotoSelector();
+    void refreshMap();
+    hasLoaded = true;
+    $("notice").className = "notice";
+    $("connection-status").textContent = "Servidor conectado";
+    $("connection-status").className = "connection-chip connected";
+    $("last-updated").textContent = "Atualizado às " + new Date().toLocaleTimeString("pt-BR") + " · a cada 15 s";
+  } catch (_) {
+    $("connection-status").textContent = "Servidor indisponível";
+    $("connection-status").className = "connection-chip disconnected";
+    showNotice(hasLoaded ? "Não foi possível atualizar. Os dados abaixo são da última atualização bem-sucedida e podem estar desatualizados." : "Não foi possível carregar as caçambas. Verifique o servidor e tente atualizar novamente.", true);
+    if (!hasLoaded) {
+      $("summary").innerHTML = '<p class="empty-state">Indicadores indisponíveis.</p>';
+      $("photo-gallery").innerHTML = '<div class="empty-state">Galeria indisponível. Use “Atualizar leituras” para tentar novamente.</div>';
+      $("dumpster-rows").innerHTML = '<tr><td colspan="7">Medições indisponíveis.</td></tr>';
+      $("gallery-count").textContent = "Indisponível";
+    }
+  } finally {
+    $("summary").setAttribute("aria-busy", "false");
+    $("photo-gallery").setAttribute("aria-busy", "false");
+    $("refresh-button").disabled = false;
+    $("refresh-button").textContent = "Atualizar leituras";
+    refreshInProgress = false;
+  }
+}
+$("refresh-button").addEventListener("click", refresh);
+$("photo-gallery").addEventListener("click", (event) => {
+  if (event.target.closest("#register-link")) $("registration").open = true;
+});
+$("photo-dumpster").addEventListener("change", (event) => {
+  $("photo-url").value = cachedDumpsters.find((item) => item.id === event.target.value)?.image_url || "";
+});
+$("photo-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const id = $("photo-dumpster").value;
+  if (!id) return;
+  button.disabled = true;
+  try {
+    await api("/api/dumpsters/" + encodeURIComponent(id) + "/photo", {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({image_url: $("photo-url").value.trim() || null})});
+    await refresh();
+    showNotice("Associação da fotografia atualizada.");
+  } catch (error) { showNotice(error.message, true); }
+  finally { button.disabled = !cachedDumpsters.length; }
+});
+$("register-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const values = Object.fromEntries(new FormData(form).entries());
+  for (const key of ["empty_distance_cm", "full_distance_cm", "fill_threshold_percent", "daily_fill_rate_percent"]) values[key] = Number(values[key]);
+  values.image_url = values.image_url.trim() || null;
+  button.disabled = true;
+  button.textContent = "Cadastrando…";
+  try {
+    await api("/api/dumpsters", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(values)});
+    form.reset();
+    await refresh();
+    showNotice("Caçamba cadastrada com sucesso.");
+  } catch (error) { showNotice(error.message, true); }
+  finally { button.disabled = false; button.textContent = "Cadastrar caçamba"; }
+});
 function translateDecisionReason(reason) {
   if (reason === "no valid measurement") return "Sem medição válida.";
   const freshness = reason.match(/^(normal|stale|offline|no_data) measurement; manual review required$/);
@@ -74,26 +241,6 @@ function translateDecisionReason(reason) {
   return translateBackendMessage(reason);
 }
 
-async function api(path, options) {
-  const response = await fetch(path, options);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = body.detail || response.statusText || "Request failed";
-    throw new Error(translateBackendMessage(typeof detail === "string" ? detail : JSON.stringify(detail)));
-  }
-  return body;
-}
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[char]));
-}
-function showNotice(message, error) {
-  const node = $("notice");
-  node.textContent = message;
-  node.className = "notice visible" + (error ? " error" : "");
-}
-function hideNotice() { $("notice").className = "notice"; }
 function decisionMap(plan) {
   const result = {};
   for (const item of (plan?.decisions || [])) result[item.dumpster_id] = item;
@@ -105,42 +252,6 @@ function fillColor(item) {
   if (fill >= 90) return "#c94d43";
   if (fill >= 70) return "#e0a33b";
   return "#269466";
-}
-function renderSummary(dumpsters, plan) {
-  const normal = dumpsters.filter((item) => item.status === "normal");
-  const avg = normal.length ? normal.reduce((total, item) => total + (item.latest?.fill_percentage || 0), 0) / normal.length : 0;
-  const values = [
-    ["Caçambas cadastradas", dumpsters.length, "Em todos os pontos registrados"],
-    ["Com leitura recente", normal.length, "Conforme o horário da última medição"],
-    ["Enchimento médio estimado", normal.length ? formatNumber(avg) + "%" : "—", "Considera apenas leituras recentes"],
-    ["Pontos na rota", plan ? plan.optimized.stop_count : "—", "Próximo dia fixo de coleta"]
-  ];
-  $("summary").innerHTML = values.map((item) =>
-    '<article class="stat-card"><p class="stat-label">' + escapeHtml(item[0]) +
-    '</p><div class="stat-value">' + escapeHtml(item[1]) +
-    '</div><div class="stat-note">' + escapeHtml(item[2]) + "</div></article>"
-  ).join("");
-}
-function renderDumpsters(dumpsters, plan) {
-  const decisions = decisionMap(plan);
-  if (!dumpsters.length) {
-    $("dumpster-rows").innerHTML = '<tr><td colspan="6">Nenhuma caçamba cadastrada. Execute o simulador ou cadastre um ponto abaixo.</td></tr>';
-    return;
-  }
-  $("dumpster-rows").innerHTML = dumpsters.map((item) => {
-    const latest = item.latest, fill = latest ? Number(latest.fill_percentage) : null;
-    const decision = decisions[item.id];
-    let decisionText = decision ? translateDecisionReason(decision.reason) : (plan ? "Cadastrada após a última rota; planeje novamente para avaliar." : "Planeje uma rota para calcular quais pontos serão coletados.");
-    if (decision?.selected) decisionText = "COLETAR · " + decisionText;
-    return '<tr><td><span class="site-name">' + escapeHtml(item.name) +
-      '</span><span class="site-id">' + escapeHtml(item.id) + '</span></td><td class="address-cell">' +
-      escapeHtml(item.address || item.geocoded_label || "Coordenadas informadas pelo dispositivo/API") + '</td><td class="fill-cell">' +
-      (fill === null ? "—" : '<span class="fill-bar"><i class="' + (fill >= 90 ? "full" : fill >= 70 ? "high" : "") +
-      '" style="width:' + Math.max(0, Math.min(100, fill)) + '%"></i></span>' + formatNumber(fill) + "%") +
-      '</td><td><span class="status ' + escapeHtml(item.status) + '">' + escapeHtml(statusLabel(item.status)) +
-      '</span></td><td>' + escapeHtml(latest ? new Date(latest.measured_at).toLocaleString("pt-BR") : "Sem envio") +
-      '</td><td class="decision">' + escapeHtml(decisionText) + "</td></tr>";
-  }).join("");
 }
 async function loadGoogleMaps(apiKey) {
   if (window.google?.maps?.importLibrary) return;
@@ -289,93 +400,49 @@ function renderMap(dumpsters, plan) {
     coverageMap.fitBounds(bounds, 40);
   }
 }
-function renderPlan(plan) {
-  cachedPlan = plan;
-  if (!plan) {
-    $("route-title").textContent = "Localização das caçambas";
-    $("route-provider").textContent = "Todos os pontos cadastrados";
-    $("route-stops").textContent = "";
-    $("metrics").innerHTML = '<p class="map-caption">Planeje uma rota para um dia fixo de coleta e compare com a rota de referência.</p>';
-    renderMap(cachedDumpsters, null);
-    return;
-  }
-  $("route-title").textContent = "Localização das caçambas";
-  $("route-provider").textContent = "Rota · " + new Date(plan.collection_date + "T12:00:00").toLocaleDateString("pt-BR");
-  if (plan.provider_warning) showNotice(translateBackendMessage(plan.provider_warning), false);
-  $("route-stops").innerHTML = plan.route.length ? plan.route.map((stop) =>
-    '<span class="stop-pill"><span class="stop-number">' + stop.sequence + "</span>" +
-    escapeHtml(stop.dumpster_id) + " · " + formatNumber(stop.fill_percentage, 0) + "%</span>"
-  ).join("") : '<span class="map-caption">Nenhuma caçamba com leitura recente foi selecionada. A agenda permanece inalterada.</span>';
-  const base = plan.baseline, optimized = plan.optimized;
-  const rows = [
-    ["Pontos", optimized.stop_count, "referência: " + base.stop_count],
-    ["Distância", formatNumber(optimized.distance_km, 2) + " km", "referência: " + formatNumber(base.distance_km, 2) + " km"],
-    ["Duração estimada", formatNumber(optimized.duration_minutes, 0) + " min", "referência: " + formatNumber(base.duration_minutes, 0) + " min"],
-    ["Combustível estimado", formatNumber(optimized.estimated_fuel_liters, 2) + " L", "referência: " + formatNumber(base.estimated_fuel_liters, 2) + " L"],
-    ["CO₂ estimado", formatNumber(optimized.estimated_co2_kg, 2) + " kg", "referência: " + formatNumber(base.estimated_co2_kg, 2) + " kg"],
-    ["Custo estimado de combustível", "R$ " + formatNumber(optimized.estimated_fuel_cost_brl, 2), "distância economizada: " + formatNumber(plan.estimated_distance_saved_km, 2) + " km"]
-  ];
-  $("metrics").innerHTML = rows.map((row) =>
-    '<div class="metric-line"><span class="metric-name">' + escapeHtml(row[0]) +
-    '</span><span class="metric-value">' + escapeHtml(row[1]) + "<small>" +
-    escapeHtml(row[2]) + "</small></span></div>"
+
+function renderRouteStops() {
+  const plan = cachedPlan;
+  $("map-status").textContent = plan
+    ? "Rota para " + new Date(plan.collection_date + "T12:00:00").toLocaleDateString("pt-BR") + " · agenda fixa preservada"
+    : "Nenhuma rota planejada. Todos os pontos cadastrados aparecem no mapa.";
+  $("route-stops").innerHTML = (plan?.route || []).map((stop) =>
+    '<span class="stop-pill"><b>' + escapeHtml(stop.sequence) + '</b> ' + escapeHtml(stop.dumpster_id) + '</span>'
   ).join("");
-  renderMap(cachedDumpsters, plan);
 }
-async function refresh() {
-  if (refreshInProgress) return;
-  refreshInProgress = true;
-  hideNotice();
+async function refreshMap() {
   try {
-    const responses = await Promise.all([
-      api("/api/config"), api("/api/dumpsters"), api("/api/routes/latest")
-    ]);
-    cachedDumpsters = responses[1];
-    cachedPlan = responses[2];
-    if (!coverageMap) await initializeMap(responses[0]);
-    $("schedule").textContent = "Coleta fixa: " + responses[0].fixed_collection_weekdays.map(weekdayLabel).join(" · ");
-    renderSummary(cachedDumpsters, cachedPlan);
-    renderDumpsters(cachedDumpsters, cachedPlan);
-    renderPlan(cachedPlan);
-  } catch (error) { showNotice(translateBackendMessage(error.message), true); }
-  finally { refreshInProgress = false; }
+    cachedPlan = await api("/api/routes/latest");
+    renderRouteStops();
+    renderMap(cachedDumpsters, cachedPlan);
+  } catch (_) {
+    $("map-status").textContent = "Não foi possível atualizar a rota. As medições continuam disponíveis.";
+    renderMap(cachedDumpsters, cachedPlan);
+  }
 }
 $("plan-button").addEventListener("click", async () => {
   const button = $("plan-button");
   button.disabled = true;
   button.textContent = "Planejando…";
   try {
-    const plan = await api("/api/routes/plan", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})
-    });
-    renderPlan(plan);
-    renderDumpsters(cachedDumpsters, plan);
-    renderSummary(cachedDumpsters, plan);
-    showNotice("Rota planejada para a próxima data fixa de coleta: " + new Date(plan.collection_date + "T12:00:00").toLocaleDateString("pt-BR"), false);
-  } catch (error) { showNotice(translateBackendMessage(error.message), true); }
-  finally { button.disabled = false; button.textContent = "Planejar próxima coleta"; }
-});
-$("refresh-button").addEventListener("click", refresh);
-$("register-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const submit = form.querySelector('button[type="submit"]');
-  const values = Object.fromEntries(new FormData(form).entries());
-  for (const key of ["empty_distance_cm", "full_distance_cm", "fill_threshold_percent", "daily_fill_rate_percent"]) {
-    values[key] = Number(values[key]);
+    cachedPlan = await api("/api/routes/plan", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})});
+    renderRouteStops();
+    renderMap(cachedDumpsters, cachedPlan);
+  } catch (error) {
+    $("map-status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Planejar próxima coleta";
   }
-  submit.disabled = true;
-  submit.textContent = "Localizando endereço…";
-  showNotice("Localizando o endereço e cadastrando a caçamba…", false);
-  try {
-    const response = await api("/api/dumpsters", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(values)
-    });
-    form.reset();
-    showNotice("Caçamba cadastrada em " + response.dumpster.geocoded_label + ".", false);
-    await refresh();
-  } catch (error) { showNotice(translateBackendMessage(error.message), true); }
-  finally { submit.disabled = false; submit.textContent = "Cadastrar caçamba"; }
+});
+
+// Optional map configuration must not block measurement rendering.
+api("/api/config").then((config) => {
+  $("schedule").textContent = "Coleta fixa: " + config.fixed_collection_weekdays.map(weekdayLabel).join(" · ");
+  initializeMap(config).then(() => renderMap(cachedDumpsters, cachedPlan));
+}).catch(() => {
+  $("schedule").textContent = "Agenda indisponível";
+  $("route-map").textContent = "Não foi possível carregar a configuração do mapa. Atualize a página para tentar novamente.";
 });
 refresh();
 window.setInterval(refresh, 15000);

@@ -10,9 +10,78 @@ This repository began with project guidance only. The implementation choices bel
 - FastAPI REST API with SQLite persistence, multiple dumpsters, per-dumpster calibration/thresholds, timestamp ordering, duplicate handling, freshness health, and measurement history.
 - Stop selection based on current/projected fill at the next fixed weekday. Stale and offline data are flagged and left for manual review.
 - Optional OSRM distance/time matrices. A local haversine-based approximate road-distance fallback supports offline demos. The local solver uses exact Held-Karp TSP through 12 stops and nearest-neighbor plus 2-opt above that.
-- Dashboard em português brasileiro com Google Maps Platform, marcadores avançados para cada ponto cadastrado, nível de enchimento e situação dos dispositivos, rota selecionada, ordem de coleta e comparação com a referência.
+- Responsive Portuguese monitoring dashboard with a **Dumpster Photo Gallery**, sensor-derived fill levels, raw/filtered distances, measurement timestamps, and freshness-based sensor health. The Google map, dumpster markers, saved route overlay, and route-planning button are restored above the gallery; routing APIs, algorithms, and route history remain available.
 - Synthetic multi-site sensor simulator that sends through the same HTTP API as hardware.
 - Native C++ tests for firmware measurement logic and Python tests for API, calibration, routing, and simulation definitions.
+
+## Dumpster Photo Gallery
+
+The dashboard prioritizes dumpster monitoring and visual inspection. Each registered dumpster has a card with its photograph (or a clearly labeled placeholder), ID/name, estimated fill, raw and filtered distances, latest measurement timestamp, and sensor freshness status. Data comes from `GET /api/dumpsters` and refreshes every 15 seconds. Times are shown in the browser's local time zone; the original timezone-aware timestamp is retained in the HTML `time` element. Off-line/stale states reflect measurement age, not a verified live Wi-Fi connection. Empty, loading, API failure, and broken-image states are supported. Failed refreshes retain the last successful data with a warning.
+
+The Google map, route overlay, route stop list, and planning button are present alongside the gallery. The route comparison charts remain omitted. Route optimization, fixed collection schedules, `/api/routes/plan`, `/api/routes/latest`, and route-plan storage are preserved. Photographs are for identification only: fill continues to come exclusively from ultrasonic distance and the backend's per-dumpster calibration.
+
+### Store and associate photographs
+
+No identified dumpster photos were found. Existing untracked `ciclorota/data/photo_*.jpg` webcam captures have no dumpster association and are left unchanged; they are not exposed or copied into the image. No photographs are generated.
+
+Place actual dumpster photographs in this directory (filenames may include letters, digits, underscores, dots, and hyphens):
+
+```text
+ciclorota/dashboard/images/
+  photo-placeholder.svg          # Generic missing-image icon, not a photograph
+  dumpsters/
+    <your-photo>.jpg             # Add real local images here
+```
+
+Supported local image types: JPG/JPEG, PNG, WebP, AVIF, and GIF. Files are served as `/dashboard/images/dumpsters/<your-photo>.jpg`; optional subdirectories are supported. Do not enter a Windows filesystem path. Alternatively, use an accessible absolute HTTP(S) image URL. On an HTTPS deployment, use HTTPS images to avoid mixed-content blocking.
+
+The nullable `image_url` field links the photo to a real dumpster record. Existing records automatically receive `NULL` through an idempotent additive SQLite column migration; no existing records, measurements, or routes are removed. Creating a dumpster still works without `image_url`.
+
+For an existing record, expand **Associar ou alterar uma fotografia**, select its actual ID, enter the path/URL, and save. The registration form also supports an optional photograph URL. These controls save links only; there is no file upload endpoint. API clients may set `image_url` on `POST /api/dumpsters`, or update an existing association:
+
+```http
+PATCH /api/dumpsters/<registered-id>/photo
+Content-Type: application/json
+
+{"image_url": "/dashboard/images/dumpsters/your-photo.jpg"}
+```
+
+Send `{"image_url": null}` to clear it. Unsupported URL schemes, filesystem paths, and local directory traversal are rejected. A valid but unavailable image displays the placeholder; it does not affect sensor measurements.
+
+### Docker photo assets
+
+Local assets under `ciclorota/dashboard/images/` are included by `.dockerignore`, Python package-data rules, and the existing Dockerfile's package copy. No new service, absolute path, or network setting is needed; the existing database volume is preserved and a read-only photo-directory bind mount is added. Compose mounts this host directory read-only into the API container, so added or replaced photos are visible immediately after the dashboard refresh. Rebuild with `docker compose up --build -d` after application code changes. Database associations persist in the existing SQLite volume. With the development bind mount, new local files are available without rebuilding.
+
+## Host camera connected to the gallery
+
+`ciclorota/camera.py` runs on the computer with the webcam, outside Docker. It verifies the selected ID against actual `/api/dumpsters` records before opening the camera, saves the latest complete JPEG into the local photo directory, and links that file through `PATCH /api/dumpsters/{id}/photo`. It never creates a dumpster, posts a sensor measurement, or infers fill from an image. Importing the module does not open a camera.
+
+From the repository root on Windows:
+
+```powershell
+# Install the optional camera dependency in the host virtual environment.
+.\.venv\Scripts\python.exe -m pip install -e ".[camera]"
+
+# List actual registered dumpster IDs (does not open the camera).
+.\.venv\Scripts\python.exe -m ciclorota.camera --list
+
+# Replace YOUR_REGISTERED_ID with the actual container this camera monitors.
+.\.venv\Scripts\python.exe -m ciclorota.camera --dumpster-id YOUR_REGISTERED_ID
+```
+
+If no IDs are listed, register the real dumpster and its calibration/location in the dashboard or `/docs` first. The script refuses unknown IDs. To select another webcam, add `--source 1`. `--interval 5` is the default capture interval. `--once` saves and links one image, then exits; `--preview` optionally displays a camera window (q exits). Without preview, use Ctrl+C to stop. `--base-url http://localhost:8000` selects the API; the default assumes camera and Docker run on this computer. A video file or camera stream URL may also be supplied as `--source`.
+
+Captured files are named `camera-<id>-<digest>.jpg` under `ciclorota/dashboard/images/dumpsters/`. The suffix distinguishes IDs that differ only in letter case on Windows. Only the selected dumpster's photo link is changed, after a complete first image is saved. Every five seconds the script atomically replaces that file, so readers do not receive a partly written JPEG. It keeps one latest photo per ID rather than an unbounded archive. Camera read/encode errors preserve the previous photo and release the device.
+
+Compose mounts `./ciclorota/dashboard/images/dumpsters` at `/app/ciclorota/dashboard/images/dumpsters:ro`. Capture runs on the host, which can write; the container can only read. Default Docker startup is unchanged:
+
+```powershell
+docker compose up --build -d
+```
+
+The gallery refreshes every 15 seconds and adds a changing `_photo_v` query parameter to same-origin local photograph URLs. This retrieves updated camera bytes even though the filename is unchanged. External/signed image URLs are left untouched. Sensor measurement timestamps still describe the sensor reading, not the photo capture time. The camera prints its own capture timestamp in UTC; photo timestamps are not stored in the database.
+
+Generated `camera-*.jpg` and temporary `.capture-*.tmp` files are excluded from Git and Docker image builds; they remain available through the directory mount. Existing unassigned webcam captures in `ciclorota/data` are neither imported nor deleted. There is no upload endpoint or automatic dumpster recognition. Run one explicitly configured capture process per camera/dumpster association. To run the camera on another machine, the photograph directory must also be shared/synchronized with the API host; changing `--base-url` alone does not transfer image bytes.
 
 ## Run with Docker Compose
 
@@ -58,15 +127,15 @@ For example, if the host currently has address `192.168.1.20`, use `http://192.1
 
 Register the dumpster ID in CicloRota before configuring the same ID in firmware. The HTTP payload remains the existing JSON contract documented in the ESP32 measurement protocol section. Ingested observations are persisted in the SQLite volume and appear on the dashboard at its next refresh.
 
-### Environment, maps, and routing
+### Environment, address lookup, and backend routing
 
 The Compose file passes the existing `CICLOROTA_*` settings from `.env` to the API container. The backend binds to `0.0.0.0:8000` inside Docker. Since the API also serves the dashboard, browser requests use the current page's origin; browser code does not use a Docker-only service hostname.
 
-To enable the Google map and address registration, set `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY` and `CICLOROTA_GOOGLE_GEOCODING_API_KEY` in `.env`, keeping them separate and restricted as described below. The browser key is necessarily returned to the browser and must be restricted to website referrers and the Maps JavaScript API. For access through the host LAN address, authorize that origin in Google Cloud as well. Keep `.env` private. After changing environment values, apply them by recreating the service:
+Address-based registration still uses the backend Google Geocoding API. Set `CICLOROTA_GOOGLE_GEOCODING_API_KEY` in `.env` if needed. Without it, coordinate-based API registration, monitoring, and the photo gallery still work. The map uses the existing browser Maps key and map ID. Configure `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY` and `CICLOROTA_GOOGLE_MAP_ID` for map rendering. No Google key is needed for photo viewing.
+
+After changing environment values, recreate the service:
 
     docker compose up -d --force-recreate ciclorota
-
-Without Google credentials, the API and dashboard data table still work; the map shows setup guidance, and address geocoding cannot call Google. Coordinate-based API registration remains available.
 
 OSRM is still an optional external service; no map data or OSRM container is downloaded. Leave `CICLOROTA_OSRM_URL` blank to use the local approximate-distance fallback. If an OSRM service is running on the Docker host, use `http://host.docker.internal:5000` on Docker Desktop. On Linux, use an address reachable from the container (for example, the Docker host gateway) or attach the service to the Compose network and use its service DNS name. A route failure continues to fall back to the local approximation.
 
@@ -133,39 +202,21 @@ All settings are read from environment variables when the API starts.
 
 Configure the host to use the same local time zone as the collection operations. A supplied collection date must be on one of the configured weekdays; planning does not alter the dispatch schedule.
 
-### Google Maps Platform setup
+### Address lookup and retained route APIs
 
-The dashboard registration form accepts a physical street address. On submission, the FastAPI backend calls the Google Geocoding API, stores the submitted address, returned formatted address, and resolved coordinates in SQLite, then returns the new pin in dashboard data. Coordinate registration remains available to simulator and API clients. An address with no result returns HTTP 422; a provider or configuration failure returns HTTP 502 without creating the dumpster. Successful responses are cached in SQLite for the single-tenant MVP.
+The dashboard registration form accepts a physical street address. FastAPI resolves it with the Google Geocoding API, stores the address and coordinates, and caches successful lookups in SQLite. Configure a secret server key restricted to Geocoding API using `CICLOROTA_GOOGLE_GEOCODING_API_KEY`. A missing address result returns HTTP 422; unavailable configuration/provider returns HTTP 502 without creating a dumpster. Coordinate registration remains available to API clients without a key. Address input is sent to Google; use operational site addresses. Review the provider's policies before public deployment.
 
-To enable maps and address registration:
+The dashboard again loads Maps JavaScript and visualizes dumpster locations and the saved route, following the user’s map restoration request. Existing `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY`, `CICLOROTA_GOOGLE_MAP_ID`, and `/api/config` fields remain for backward compatibility. The secret geocoding key is never returned to browsers.
 
-1. Create a Google Cloud project with billing enabled, then enable **Maps JavaScript API** and **Geocoding API**.
-2. Create a browser key restricted to **Maps JavaScript API** and authorized website referrers. For local development, allow `http://localhost:8000/*` and `http://127.0.0.1:8000/*`.
-3. Create a separate server key restricted to **Geocoding API** and the backend's source IP. Keep this key secret.
-4. Replace both example key values below with actual keys from your Google Cloud project. For Docker Compose, put these values in `.env`; when running Uvicorn directly, export the variables before starting the API. The literal `your-...` values are placeholders and cannot load a map or geocode an address:
-
-       export CICLOROTA_GOOGLE_MAPS_BROWSER_KEY="your-referrer-restricted-browser-key"
-       export CICLOROTA_GOOGLE_GEOCODING_API_KEY="your-server-only-geocoding-key"
-       export CICLOROTA_GOOGLE_MAP_ID="DEMO_MAP_ID"
-
-   `DEMO_MAP_ID` is for testing. Create and configure a production map ID for deployment.
-
-The browser key is returned by `GET /api/config` so the dashboard can load Maps JavaScript; it is expected to be visible to browsers and must be website- and API-restricted. Example key values are withheld from the response, and `google_maps_key_status` reports `missing`, `placeholder`, or `provided`. This status only checks local configuration; Google validates the actual key. The Geocoding API key is read only by the backend and is never returned by the API. Google Maps may incur usage charges; set quotas and billing alerts in the Cloud project. See Google's [API key security guidance](https://developers.google.com/maps/api-security-best-practices) and [Advanced Markers setup](https://developers.google.com/maps/documentation/javascript/advanced-markers/start).
-
-The dashboard uses Google Maps JavaScript API with a configured map ID and Advanced Markers. It displays every registered dumpster using latest fill and device-health colors, shows site details and route decisions in click popups, overlays the planned route, and refreshes backend status every 15 seconds. If the browser key is not configured or the Google script cannot load, the dashboard explains the required configuration and the API/table remain usable. Google Maps provides its map attribution in the map UI. Address input is sent to Google for geocoding, so enter operational site addresses rather than confidential personal information. Review Google's [Geocoding policies and attribution requirements](https://developers.google.com/maps/documentation/geocoding/policies); the current MVP is single-tenant and the local project does not supply public Terms of Use or Privacy Policy pages required for a public deployment. Review storage and data isolation requirements before changing this into a multi-tenant service.
-
-#### Troubleshooting `InvalidKeyMapError` / `InvalidKey`
-
-These console messages mean Google does not recognize the key being sent to Maps JavaScript API. Set a valid browser API key in `CICLOROTA_GOOGLE_MAPS_BROWSER_KEY` (the separate Geocoding key does not replace it); do not use the example `your-...` value, a project number, or an OAuth client ID. The dashboard now detects example keys locally and displays setup guidance without loading Google's script. In Google Cloud Console, confirm the key belongs to an active project, Maps JavaScript API is enabled and allowed by that key's API restrictions, and the current site origin is allowed by its website referrer restriction. For Docker Compose, recreate the service with `docker compose up -d --force-recreate ciclorota`; when running Uvicorn directly, restart the server. Then hard-refresh the dashboard. Google documents `InvalidKeyMapError` as an unrecognized key and `InvalidKey` as a malformed or incorrect key; see its [error reference](https://developers.google.com/maps/documentation/javascript/error-messages#invalid-key-map-error). Billing and API activation errors have separate console codes.
-
-OSRM mode calls its table service for a full distance/duration matrix. The MVP does not download map data or start OSRM itself; configure an already-running OSRM-compatible service. If the service is unreachable or returns incomplete routes, a warning is returned and the local approximation is used. The dashboard overlays the planned stop sequence on Google Maps. Route distance and duration come from the selected matrix provider; the fallback route line is illustrative, while OSRM distances use its road network.
+Backend routing remains operational through the API. OSRM can supply a road-distance/duration matrix; an unavailable service falls back to the configured local approximation. Route algorithms, fixed collection dates, saved route plans, and estimated operating metrics are unchanged and available through `/docs`, through the API as well as the dashboard map and planning control.
 
 ## API
 
 - GET /api/health — service/database health.
 - GET /api/config — fixed weekdays, next collection date, freshness policy, routing configuration, public Maps JavaScript key and its local configuration status, and map ID. Example keys are withheld; the server geocoding key is never included.
 - POST /api/dumpsters — register a site by street address (automatically geocoded) or coordinates for programmatic clients, plus calibration, fill threshold, daily fill-rate estimate, and baseline order.
-- GET /api/dumpsters — current latest valid measurement plus normal/stale/offline/no-data health.
+- GET /api/dumpsters — optional `image_url`, current latest valid measurement, and normal/stale/offline/no-data health.
+- PATCH /api/dumpsters/{dumpster_id}/photo — update or clear a photograph association without changing sensor data.
 - POST /api/measurements — ingest an ESP32 or simulated observation. The backend recomputes fill percentage from filtered distance and that dumpster's calibration; a supplied fill percentage must agree within five points.
 - GET /api/measurements/{dumpster_id}?limit=100 — measurement history.
 - POST /api/routes/plan — plan a route for the next fixed day, or a caller-supplied date that matches a fixed weekday. Depot defaults are illustrative São Carlos coordinates.
@@ -211,7 +262,7 @@ The device sends `Content-Type: application/json` to `POST /api/measurements`:
 
     .venv/bin/pytest
 
-The Python suite covers fill math, calibration errors, Kalman smoothing, invalid/outlier samples, discontinuity resets, API schema/duplicate/timestamp handling, address geocoding and cache, provider failures, database migration, stale-state behavior, fixed-weekday enforcement, route optimization, local-distance fallback, and demo fixture structure.
+The Python suite covers optional photograph associations, safe image links, existing-database compatibility, preserved sensor/routing behavior, fill math, calibration errors, Kalman smoothing, invalid/outlier samples, discontinuity resets, API schema/duplicate/timestamp handling, address geocoding and cache, provider failures, database migration, stale-state behavior, fixed-weekday enforcement, route optimization, local-distance fallback, and demo fixture structure.
 
 The portable firmware measurement pipeline has a standalone native test. With a C++17 compiler:
 
@@ -219,6 +270,16 @@ The portable firmware measurement pipeline has a standalone native test. With a 
     /tmp/ciclorota-firmware-test
 
 A PlatformIO/ESP32 toolchain and physical hardware are separate from these tests. Software simulation does not verify sensor mounting, electrical levels, radio performance, ESP32 timing, or actual collection results.
+
+### Optional browser checks
+
+Browser tests use temporary SQLite records and tiny PNG test fixtures; they never insert mock readings into the running dashboard database. To run desktop/mobile layout, correct image association, missing-image fallback, zero-fill, timestamps, photo editing, and API failure/recovery checks:
+
+    .venv/bin/python -m pip install playwright
+    .venv/bin/python -m playwright install chromium
+    .venv/bin/python -m pytest tests/test_dashboard_browser.py -q
+
+On Windows use `.venv\Scripts\python.exe`; tests can use an installed Microsoft Edge instead of downloading Chromium. Browser tests explicitly skip when the optional package/browser is unavailable. Test screenshots are written to ignored `build/`.
 
 ## MVP assumptions and limits
 
@@ -229,3 +290,18 @@ A PlatformIO/ESP32 toolchain and physical hardware are separate from these tests
 - Fuel, CO2, distance-saved, duration, and fuel-cost values are estimates. The system does not infer truck mass capacity from fill percentages. ROI/payback is not calculated because deployment capital and non-fuel operating costs are not known.
 - The fallback applies a configurable road detour factor to great-circle distance and assumes a constant average speed; it is not a road-network result. Use OSRM for road-aware estimates.
 - No physical ESP32/HC-SR04 test or industrial field trial has been conducted.
+
+### Gallery verification results
+
+Executed locally: 58 tests passed, including five desktop/mobile browser checks
+and the native C++ sensing test. JavaScript syntax checking passed. Docker
+Compose built and started successfully; the container is healthy, and live
+HTTP/browser smoke checks passed for the gallery and placeholder. The live
+Docker database had no registered dumpsters; multi-dumpster/image behavior was
+verified using isolated test records, without populating the live database.
+Real photographs and real container calibration still need to be provided.
+
+
+### Map restored alongside the gallery
+
+At the user’s request, Google Maps, live dumpster markers, the saved route overlay, and the next-collection planning button are restored above the photo gallery. Navigation includes Mapa. Existing Maps environment settings are reused. Map errors are shown within the map panel without blocking measurements or photographs. Photo associations and sensor ingestion are unchanged.

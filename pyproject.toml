@@ -14,15 +14,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<9.0", "httpx>=0.27,<1.0"]
+camera = ["opencv-python>=4.10,<5"]
 
 [project.scripts]
 ciclorota-simulate = "ciclorota.simulation:main"
+ciclorota-camera = "ciclorota.camera:main"
 
 [tool.setuptools.packages.find]
 include = ["ciclorota*"]
 
 [tool.setuptools.package-data]
-ciclorota = ["dashboard/*"]
+ciclorota = ["dashboard/*", "dashboard/images/*.svg", "dashboard/images/dumpsters/*", "dashboard/images/dumpsters/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

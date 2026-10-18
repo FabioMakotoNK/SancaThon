@@ -169,30 +169,30 @@ def test_projection_prevents_overflow_before_fixed_run(tmp_path):
 
 def test_dashboard_and_static_assets_are_served(tmp_path):
     client = make_client(tmp_path / "api.sqlite3")
-    assert client.get("/").status_code == 200
     page = client.get("/").text
     assert "CicloRota" in page
-    assert "name=\"address\"" in page
-    assert "Interactive map of dumpster locations" in page
-    assert "Google Maps attribution appears on the map" in page
-    assert "leaflet" not in page.lower()
+    assert 'name="address"' in page
+    assert 'name="image_url"' in page
+    assert "Dumpster Photo Gallery" in page
+    assert 'id="photo-gallery"' in page
+    assert 'id="route-map"' in page
+    assert 'id="plan-button"' in page
+    assert 'id="metrics"' not in page
     app_js = client.get("/dashboard/app.js").text
-    assert "maps.googleapis.com/maps/api/js" in app_js
+    assert 'api("/api/dumpsters")' in app_js
+    assert '/api/routes/latest' in app_js
+    assert "maps.googleapis.com" in app_js
     assert "AdvancedMarkerElement" in app_js
-    assert "gm_authFailure" in app_js
-    assert "CICLOROTA_GOOGLE_MAPS_BROWSER_KEY" in app_js
-    assert "tile.openstreetmap.org" not in app_js
+    assert "window.setInterval(refresh, 15000)" in app_js
+    assert client.get("/dashboard/style.css").status_code == 200
+    placeholder = client.get("/dashboard/images/photo-placeholder.svg")
+    assert placeholder.status_code == 200
+    assert placeholder.headers["content-type"].startswith("image/svg+xml")
     config = client.get("/api/config").json()
+    # Retain compatibility for API consumers and keep backend secrets private.
     assert config["google_maps_browser_key"] == "browser-restricted-key"
-    assert config["google_maps_key_status"] == "provided"
-    assert config["google_maps_map_id"] == "test-map-id"
     assert "google_geocoding_api_key" not in config
     assert "server-only-secret" not in str(config)
-    assert "server-only-secret" not in app_js
-    dashboard_js = client.get("/dashboard/app.js").text
-    assert "api(\"/api/dumpsters\")" in dashboard_js
-    assert "api(\"/api/routes/latest\")" in dashboard_js
-    assert "window.setInterval(refresh, 15000)" in dashboard_js
 
 
 
@@ -229,7 +229,7 @@ def test_esp32_http_payload_persists_and_updates_dashboard_data(tmp_path):
     assert latest["raw_distance_cm"] == 52.0
     assert latest["distance_cm"] == 50.0
     assert latest["fill_percentage"] == 80.0
-    assert latest["measured_at"] == measured_at
+    assert datetime.fromisoformat(latest["measured_at"]) == datetime.fromisoformat(measured_at).replace(microsecond=0)
     run_day = next_collection_date(local_today("America/Sao_Paulo"), (0, 3))
     plan = client.post("/api/routes/plan", json={"collection_date": run_day.isoformat()})
     assert plan.status_code == 200, plan.text

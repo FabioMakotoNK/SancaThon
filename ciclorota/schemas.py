@@ -5,8 +5,36 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Annotated
 from uuid import uuid4
+from urllib.parse import urlsplit
+import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def validate_image_url(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    try:
+        url = urlsplit(value)
+        # Accessing port also validates malformed ports.
+        url.port
+        if url.scheme in ("http", "https") and url.hostname and not url.username and not url.password:
+            if any(char.isspace() for char in value) or "\\" in value:
+                raise ValueError("Invalid photo URL")
+            return value
+    except ValueError:
+        pass
+    if (re.fullmatch(r"/dashboard/images/dumpsters/[A-Za-z0-9_./-]+\.(?:jpg|jpeg|png|webp|avif|gif)", value, re.IGNORECASE)
+            and all(part not in (".", "..", "") for part in value.split("/")[1:])):
+        return value
+    raise ValueError("Use an HTTP(S) image URL or /dashboard/images/dumpsters/photo.jpg")
+
+
+class DumpsterImageUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    image_url: Annotated[str | None, Field(max_length=2048)]
+    validate_photo = field_validator("image_url")(validate_image_url)
 
 
 class DumpsterCreate(BaseModel):
@@ -22,6 +50,8 @@ class DumpsterCreate(BaseModel):
     fill_threshold_percent: Annotated[float | None, Field(ge=0, le=100)] = None
     daily_fill_rate_percent: Annotated[float, Field(ge=0, le=100)] = 0.0
     baseline_order: Annotated[int, Field(ge=0, le=100000)] = 0
+    image_url: Annotated[str | None, Field(max_length=2048)] = None
+    validate_photo = field_validator("image_url")(validate_image_url)
 
     @model_validator(mode="after")
     def location_and_calibration_are_valid(self) -> "DumpsterCreate":

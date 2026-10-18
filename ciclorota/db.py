@@ -31,7 +31,8 @@ class Database:
                     baseline_order INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     address TEXT,
-                    geocoded_label TEXT
+                    geocoded_label TEXT,
+                    image_url TEXT
                 );
                 CREATE TABLE IF NOT EXISTS measurements (
                     measurement_id TEXT PRIMARY KEY,
@@ -65,6 +66,8 @@ class Database:
                 conn.execute("ALTER TABLE dumpsters ADD COLUMN address TEXT")
             if "geocoded_label" not in columns:
                 conn.execute("ALTER TABLE dumpsters ADD COLUMN geocoded_label TEXT")
+            if "image_url" not in columns:
+                conn.execute("ALTER TABLE dumpsters ADD COLUMN image_url TEXT")
             conn.commit()
 
     @contextmanager
@@ -86,15 +89,22 @@ class Database:
             conn.execute(
                 """INSERT INTO dumpsters
                    (id, name, latitude, longitude, empty_distance_cm, full_distance_cm,
-                    fill_threshold_percent, daily_fill_rate_percent, baseline_order, created_at, address, geocoded_label)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    fill_threshold_percent, daily_fill_rate_percent, baseline_order, created_at, address, geocoded_label, image_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     item["id"], item["name"], item["latitude"], item["longitude"],
                     item["empty_distance_cm"], item["full_distance_cm"],
                     item["fill_threshold_percent"], item["daily_fill_rate_percent"],
-                    item["baseline_order"], created_at, item.get("address"), item.get("geocoded_label"),
+                    item["baseline_order"], created_at, item.get("address"), item.get("geocoded_label"), item.get("image_url"),
                 ),
             )
+
+    def update_dumpster_image(self, dumpster_id: str, image_url: str | None) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "UPDATE dumpsters SET image_url = ? WHERE id = ?", (image_url, dumpster_id)
+            )
+            return cursor.rowcount == 1
 
     def get_dumpster(self, dumpster_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:

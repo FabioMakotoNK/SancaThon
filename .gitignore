@@ -12,3 +12,7 @@ hardware/sketch_oct17b/secrets.h
 dist/
 build/
 *.egg-info/
+
+# Runtime camera captures are shared through the read-only photo bind mount.
+ciclorota/dashboard/images/dumpsters/camera-*.jpg
+ciclorota/dashboard/images/dumpsters/.capture-*.tmp
